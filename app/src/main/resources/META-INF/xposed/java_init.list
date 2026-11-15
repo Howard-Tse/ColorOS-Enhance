@@ -1,0 +1,8 @@
+com.howard.batterypercentweight.hook.BatteryWeightModule
+dev.howard.aodenhance.AodModule
+dev.howard.aodenhance.wallpaper.WallpaperModule
+dev.lsposed.fluidcloud.HookEntry
+com.howard.simpinautounlock.hook.ModuleMain
+dev.howard.colorosenhance.settings.SettingsModule
+dev.howard.colorosenhance.installer.InstallerModule
+dev.howard.colorosenhance.icons.StatusIconsModule

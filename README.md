@@ -1,0 +1,81 @@
+# ColorOS 增强
+
+面向 ColorOS 16 / Android 16、ColorOS 17 / Android 17 的 LSPosed 模块。作者：**Howard**（[Howard-Tse](https://github.com/Howard-Tse)）。当前工作树版本：**1.30.0**，应用包名：`io.github.howard_tse.colorosenhance`。
+
+旧包 `dev.howard.colorosenhance` 的用户应保留旧包和数据，安装并首次打开新版，按提示允许 root 读取以自动迁移设置。检测到旧模块仍启用时会提示在 LSPosed 取消旧版启用；返回后自动继续，最后完整重启并确认新版正常，再卸载旧包。无需先更新旧 APK 或手动导出文件，详见[迁移说明](docs/MIGRATION.md)。
+
+模块包含系统私有接口适配，不同机型、主题及系统更新后的效果可能不同。本项目不是 OPPO 或 OnePlus 官方产品。
+
+下载与反馈：[Release 下载](https://github.com/Howard-Tse/ColorOS-Enhance/releases) · [问题反馈](https://github.com/Howard-Tse/ColorOS-Enhance/issues)。首次公开的 1.30.0 作为预发布版本提供，请先阅读迁移说明与已知验证限制。
+
+## 功能
+
+- **状态栏图标**：蓝牙显示条件、时钟／电池及系统图标仅下拉显示、锁屏规则、自定义排序和左右区域移动；配合系统自身的图标开关。
+- **状态栏电池增强**：电量文字字重、位置等参数。
+- **全景息屏增强**：日期／组件显示和背景压暗等参数，按系统能力适配。
+- **流体云增强**：状态栏解绑、全屏／最近任务／下拉等场景保持显示或动画补全，以及横竖屏分别配置。
+- **胶囊与卡片**：尺寸比例、边框、切换箭头、循环切换、当前胶囊卡片优先、摄像头区域展开、圆角和连续曲线、展开背景压暗。
+- **媒体流体云**：暂停／未开始播放时显示；六频段实时律动、可拖动频率轴、读取间隔与其他参数、暂停冻结柱高。采集不可用时回退原厂效果。
+- **SIM PIN 自动解锁**：独立卡槽配置、加密存储、卡片匹配和每卡每次开机一次尝试保护。
+- **安装器替换**：选择可处理 APK 的应用；可选跳过针对该安装器的普通打开确认。
+
+提供独立设置应用和「系统设置 → 系统与更新」中的内嵌入口。数值参数支持滑条、手动输入及长按恢复单项默认值；六频段编辑器有独立恢复入口。各功能组首次安装默认关闭，升级保留已有配置。
+
+## 使用要求
+
+- 对应 ColorOS 的 Android 16 或 Android 17；最低 Android API 36。
+- 支持现代 **libxposed API 102** 的 LSPosed 实现。只支持旧 API 的框架不能加载本模块。
+- 已安装可用的 root／LSPosed 环境。管理页重启进程功能另需授予模块应用 root 权限。
+
+建议只勾选模块声明的作用域：系统界面、设置、电话、系统框架，以及 ColorOS 17 背景压暗所需的多彩引擎。包名分别为 `com.android.systemui`、`com.android.settings`、`com.android.phone`、`system`、`com.heytap.colorfulengine`；系统框架应选择管理器中的对应项目。
+
+安装后启用模块及所需作用域，并首次打开应用完成初始化或旧包迁移，再完整重启一次。系统框架／多彩引擎中的更新需要完整重启；管理页的「重启系统界面」或「一键重启作用域」不能替代。应用转场胶囊保持功能首次使用也需要完整重启。
+
+## SIM PIN 与安装器
+
+真实 PIN 只在手机设置页输入，不放进源码、截图、Issue 或日志。首次使用需要配置各卡槽；本产品更换包名时保留电话端已确认凭据，未确认暂存 PIN 不导出，独立旧 SIM 模块的凭据不迁移。关闭总开关保留已保存凭据；换卡或修改 PIN 后应重新配置。失败或不匹配时恢复手动输入。停用模块并完整重启，可恢复原厂流程。
+
+安装器替换需要自行安装并配置目标应用。没有选择目标、目标不可用或请求不符合条件时走原系统流程；本功能不会替代安装器的权限和安装后端，也不会确认安装。
+
+## 构建
+
+工具版本以工程为准：JDK 21、Android SDK 37、Build Tools 37.0.0、Gradle Wrapper 9.5.1、AGP 9.2.1。使用仓库中的 Wrapper；不包含 SDK、JDK 或私有签名。
+
+Windows PowerShell：
+
+```powershell
+# 预先配置 JAVA_HOME，以及 ANDROID_HOME 或 ANDROID_SDK_ROOT。
+# 使用共享环境时，也可设置 CODEX_ANDROID_ROOT 指向其目录。
+.\scripts\build.ps1
+```
+
+脚本优先离线构建，执行单元测试、Lint 和 Debug 构建；首次使用的机器应先准备工程声明的 SDK／依赖。Debug 签名首次生成在已忽略的 `.local/`。
+
+Release 构建：
+
+```powershell
+. .\scripts\Enter-AndroidEnvironment.ps1
+# 仅首次创建自己的发布签名时运行；已有正式密钥时不要重建。
+.\scripts\Initialize-ReleaseSigning.ps1
+.\scripts\build.ps1 -Release
+```
+
+Debug 与正式 Release 签名不同。自行构建的 APK 不能用来直接覆盖另一签名的安装。正式发布方应安全备份 `.signing/`，后续版本沿用同一签名；密钥和密码文件永不提交。
+
+## 适配与验证
+
+当前实现保留 ColorOS 16 及较早 ColorOS 17 路径，并适配过 ColorOS 17 的新插件接口。自动化用例不能代替具体机型、主题或完整开机流程的真机验证。
+
+1.30.0 已通过 1129 项测试，Debug／Release Lint 无错误。真机已完成同签名旧包的自动复制、启用状态交接及完整重启，复核独立／内嵌设置、媒体卡片和下拉面板，并完成手势复测。暂存 PIN 不迁移，未以本轮验证代替 SIM PIN 自动解锁验证。
+
+1.29.2 针对摄像头区域展开时自动弹出卡片的顶部定位增加补正；低电量胶囊等自动首弹修正尚待自然触发时实机确认，不以本地测试代替验收。版本变更见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 隐私与公开发布
+
+公开作者名为 Howard，GitHub 身份为 Howard-Tse；设备标识、诊断截图／录像、历史操作记录、个人路径和签名材料不属于公开源码。模块应用 APK 未声明联网权限。迁移读取的配置保存在应用私有空间，不作为可公开的日志或导出包。运行时数据的处理与反馈要求见[隐私说明](docs/PRIVACY.md)。
+
+提交前运行 `scripts/Audit-Publish.ps1`，仅提交经检查的 Git 文件；不要将整个工作目录压缩上传。准备源码仓库及 LSPosed 模块仓库的步骤见 [发布准备](docs/PUBLISHING.md)。
+
+## 许可证与第三方声明
+
+本项目原创代码使用 [MIT License](LICENSE)，Copyright (c) 2026 Howard。第三方依赖保留各自的许可证与署名，不因本项目采用 MIT 而改变；已核对本版 110 个运行时依赖坐标，详见[第三方许可清单](THIRD_PARTY_NOTICES.md)。APK 内也附带项目 MIT、MaterialKolor MIT 和 Apache License 2.0 全文，可从管理页查看。
