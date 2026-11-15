@@ -7,6 +7,17 @@ import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.compose.LocalActivity
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
@@ -32,6 +43,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -101,6 +113,7 @@ private fun SettingsApp(activity: MainActivity, route: String, update: Int) {
     var modal by remember { mutableStateOf<SettingsModal?>(null) }
     var localUpdate by remember { mutableIntStateOf(0) }
     val revisionSignal = update + localUpdate
+    val launchRelease = if (activity.canShowUpdatePrompt() && modal == null) app.launchUpdates().pending() else null
     val lightBars = when (appearance) { 1 -> true; 2 -> false; else -> !isSystemInDarkTheme() }
     SideEffect {
         WindowCompat.getInsetsController(activity.window, activity.window.decorView).apply {
@@ -125,12 +138,26 @@ private fun SettingsApp(activity: MainActivity, route: String, update: Int) {
     MiuixTheme(controller = theme) {
         val backdrop = rememberLayerBackdrop()
         val colors = MiuixTheme.colorScheme
+        val pageDirection = if (LocalLayoutDirection.current == LayoutDirection.Rtl) -1 else 1
         Box(Modifier.fillMaxSize().background(colors.surface)) {
-            val recording = if (root) Modifier.layerBackdrop(backdrop) else Modifier
+            val recording = if (root && glass && LocalView.current.isHardwareAccelerated) Modifier.layerBackdrop(backdrop) else Modifier
             Box(Modifier.fillMaxSize().then(recording)) {
+                AnimatedContent(
+                    targetState = if (root) tab else -1,
+                    modifier = Modifier.fillMaxSize(),
+                    transitionSpec = {
+                        if (initialState < 0 || targetState < 0) EnterTransition.None togetherWith ExitTransition.None
+                        else {
+                            val direction = (if (targetState > initialState) 1 else -1) * pageDirection
+                            ((slideInHorizontally(spring(dampingRatio = .88f, stiffness = 600f)) { (it * .06f * direction).roundToInt() } + fadeIn(tween(200)))
+                                togetherWith (slideOutHorizontally(tween(200)) { -(it * .035f * direction).roundToInt() } + fadeOut(tween(130))))
+                                .using(SizeTransform(clip = false))
+                        }
+                    }, label = "rootPageTransition"
+                ) { displayTab ->
                 Scaffold(
                     topBar = {
-                        TopAppBar(title = title, navigationIcon = {
+                        TopAppBar(title = if (root) listOf("ColorOS 增强", "功能", "管理")[displayTab] else title, navigationIcon = {
                             if (!root) Box(Modifier.size(48.dp).clickable { activity.finish() }, contentAlignment = Alignment.Center) {
                                 Image(SettingsIcons.icon("back"), "返回", Modifier.size(24.dp), colorFilter = ColorFilter.tint(colors.onSurface))
                             }
@@ -140,7 +167,7 @@ private fun SettingsApp(activity: MainActivity, route: String, update: Int) {
                 ) { padding ->
                     val modifier = Modifier.fillMaxSize().padding(padding)
                     if (root) {
-                        tabStates.SaveableStateProvider(tab) { when (tab) {
+                        tabStates.SaveableStateProvider(displayTab) { when (displayTab) {
                             0 -> Overview(app, controller, revisionSignal, modifier, ::open)
                             1 -> FeatureLibrary(activity, controller, revisionSignal, modifier, ::open)
                             else -> Management(app, controller, revisionSignal, glass, appearance, modifier,
@@ -161,6 +188,7 @@ private fun SettingsApp(activity: MainActivity, route: String, update: Int) {
                     } else if (page != null) {
                         FeaturePage(activity, app, page, controller, revisionSignal, modifier, ::open, { modal = it }, ::feedback)
                     }
+                }
                 }
             }
             if (root && WindowInsets.ime.getBottom(LocalDensity.current) == 0) {
@@ -202,6 +230,19 @@ private fun SettingsApp(activity: MainActivity, route: String, update: Int) {
                 }
             }
         }
+        if (launchRelease != null) WindowDialog(show = true, title = "发现新版本 ${launchRelease.versionName()}",
+            summary = "当前版本 ${BuildConfig.VERSION_NAME}", onDismissRequest = { app.launchUpdates().dismiss() }) {
+            if (launchRelease.notes().isNotBlank()) Column(Modifier.heightIn(max = 320.dp).verticalScrollCompat()) {
+                Text(launchRelease.notes(), Modifier.padding(top = 12.dp), fontSize = 14.sp)
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TextButton("稍后", { app.launchUpdates().dismiss() }, Modifier.weight(1f))
+                TextButton("查看更新", {
+                    app.launchUpdates().dismiss()
+                    dev.howard.colorosenhance.updates.UpdateLinks.check(activity)
+                }, Modifier.weight(1f))
+            }
+        }
     }
 }
 
@@ -236,7 +277,7 @@ private fun Overview(app: EnhanceApplication, controller: SettingsUiController, 
             }
         }
         item("heading") { SectionHeading("常用入口") }
-        items(SettingsLayout.DISPLAY_GROUPS.chunked(2), key = { it.joinToString() }) { keys ->
+        items(SettingsLayout.HOME_GROUPS.chunked(2), key = { it.joinToString() }) { keys ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 keys.forEach { key ->
                     val group = SettingsCatalog.find(key)
@@ -295,7 +336,7 @@ private fun Management(app: EnhanceApplication, controller: SettingsUiController
         item("appearance") {
             Card(Modifier.fillMaxWidth()) {
                 NavigationRow("外观", listOf("跟随系统", "浅色", "深色")[appearance], onAppearance)
-                SwitchPreference(glass, onGlass, "液态玻璃底栏", summary = "仅用于本应用底部导航；关闭后使用实色背景。")
+                SwitchPreference(glass, onGlass, "液态玻璃底栏", summary = "通透折射、流动选中高光与按压形变，支持横向拖动切换。关闭后使用实色背景。")
             }
         }
         item("entry_title") { SectionHeading("入口与显示") }
@@ -336,6 +377,8 @@ private fun Management(app: EnhanceApplication, controller: SettingsUiController
         item("about") {
             Card(Modifier.fillMaxWidth()) {
                 BasicComponent(title = "ColorOS 增强", summary = "${BuildConfig.VERSION_NAME} · ColorOS 16 / 17")
+                NavigationRow("检查更新", "当前版本 ${BuildConfig.VERSION_NAME} · 手动检查正式版", { dev.howard.colorosenhance.updates.UpdateLinks.check(activity) })
+                NavigationRow("GitHub 仓库", "源码、使用说明与问题反馈", { dev.howard.colorosenhance.updates.UpdateLinks.repository(activity) })
                 NavigationRow("开源许可", "MIT · 第三方许可", { onModal(SettingsModal.Licenses) })
             }
         }

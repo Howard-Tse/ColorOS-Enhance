@@ -363,6 +363,35 @@ public class NativeSettingsPageTest {
         f.backend.connected(); f.backend.reply("snapshot",config(9,false));
         assertTrue(f.switchAt("enabled").isEnabled()); assertFalse(f.switchAt("enabled").isChecked());
     }
+    @Test public void returnKeepsConditionalRowsInPlaceButCannotWriteBeforeFreshSnapshot() throws Exception {
+        Fixture f=new Fixture("cloud_scenes");f.page.start();f.backend.connected();
+        Bundle first=config(17,true);first.getBundle("values").putBoolean("landscape_follow_portrait",true);first.getBundle("values").putBoolean("unbind_status_bar",true);
+        f.backend.reply("snapshot",first);
+        var landscape=(com.oplus.settings.widget.preference.SettingsSimpleJumpPreference)f.host.screen.findPreference("open_cloud_landscape");
+        assertFalse(landscape.isVisible());assertTrue(f.switchAt("landscape_follow_portrait").isChecked());
+        f.page.stop();f.page.start();f.backend.connected();
+        assertFalse(landscape.isVisible());assertTrue(f.switchAt("landscape_follow_portrait").isChecked());
+        assertFalse(f.switchAt("landscape_follow_portrait").isEnabled());
+        f.switchAt("landscape_follow_portrait").getOnPreferenceChangeListener().onPreferenceChange(f.switchAt("landscape_follow_portrait"),false);
+        assertFalse(f.backend.pending.stream().anyMatch(p->"put".equals(p.request.getString("op"))));
+        // A new backend can restart its revision counter; cached revisions are never authoritative.
+        Bundle current=config(2,true);current.getBundle("values").putBoolean("landscape_follow_portrait",false);current.getBundle("values").putBoolean("unbind_status_bar",true);
+        f.backend.reply("snapshot",current);
+        assertTrue(landscape.isVisible());assertTrue(f.switchAt("landscape_follow_portrait").isEnabled());
+        assertFalse(f.switchAt("landscape_follow_portrait").isChecked());
+    }
+    @Test public void returnPreservesLauncherPresentationWithoutAllowingAnOldManagementCommand() throws Exception {
+        Fixture f=new Fixture("home");f.page.start();f.backend.connected();
+        Bundle first=new Bundle();first.putString("status","ok");first.putBoolean("launcher_visible",false);first.putLong("management_revision",17);
+        f.backend.reply("management_status",first);assertFalse(f.switchAt("launcher_visible").isChecked());
+        f.page.stop();f.page.start();f.backend.connected();
+        assertFalse(f.switchAt("launcher_visible").isChecked());assertFalse(f.switchAt("launcher_visible").isEnabled());
+        f.switchAt("launcher_visible").getOnPreferenceChangeListener().onPreferenceChange(f.switchAt("launcher_visible"),true);
+        assertFalse(f.backend.pending.stream().anyMatch(p->"launcher_visibility".equals(p.request.getString("op"))));
+        Bundle current=new Bundle(first);current.putLong("management_revision",1);
+        f.backend.reply("management_status",current);assertTrue(f.switchAt("launcher_visible").isEnabled());
+        assertFalse(f.switchAt("launcher_visible").isChecked());
+    }
     @Test public void unavailableOrUncertainWriteDoesNotClaimSaved() throws Exception {
         Fixture f = new Fixture("battery"); f.page.start(); f.backend.connected(); f.backend.reply("snapshot",config(7,false));
         SwitchPreference master=f.switchAt("enabled"); master.getOnPreferenceChangeListener().onPreferenceChange(master,true);
@@ -400,7 +429,8 @@ public class NativeSettingsPageTest {
     }
     @Test public void homeUsesNativeRoutesAndKeepsEntryToggleSeparate() throws Exception {
         Fixture f=new Fixture("home"); f.page.start(); f.backend.connected();
-        assertEquals(Set.of("battery","icons","aod","cloud","sim","installer","integration"),f.backend.requestedGroups());
+        assertEquals(Set.of("battery","icons","aod","cloud","control_center","sim","installer","integration"),f.backend.requestedGroups());
+        assertNotNull(f.host.screen.findPreference("open_control_center"));
         assertNull(f.host.screen.findPreference("open_memory"));
         Preference sim=f.host.screen.findPreference("open_sim");
         assertTrue(sim.getOnPreferenceClickListener().onPreferenceClick(sim));
@@ -425,6 +455,22 @@ public class NativeSettingsPageTest {
         assertNotNull(f.host.screen.findPreference("restart_scopes"));
         assertTrue(f.host.screen.findPreference("restart_scopes").isEnabled());
         assertFalse(f.backend.pending.stream().anyMatch(p->"restart_scopes".equals(p.request.getString("op"))));
+    }
+    @Test public void aboutLinksWorkWithoutFrameworkConnectionAndDelegateNetworkToModule() throws Exception {
+        Fixture f=new Fixture("home");f.page.start();
+        Preference check=f.host.screen.findPreference("check_updates");
+        assertNotNull(check);assertTrue(check.isEnabled());
+        check.getOnPreferenceClickListener().onPreferenceClick(check);
+        var intent=Shadows.shadowOf(f.host.context).getNextStartedActivity();
+        assertEquals(dev.howard.colorosenhance.BuildConfig.PUBLIC_APPLICATION_ID,intent.getComponent().getPackageName());
+        assertEquals("dev.howard.colorosenhance.updates.UpdateActivity",intent.getComponent().getClassName());
+        Preference repository=f.host.screen.findPreference("github_repository");
+        repository.getOnPreferenceClickListener().onPreferenceClick(repository);
+        intent=Shadows.shadowOf(f.host.context).getNextStartedActivity();
+        assertEquals(android.content.Intent.ACTION_VIEW,intent.getAction());
+        assertEquals(dev.howard.colorosenhance.updates.ReleaseInfo.SOURCE_URL,intent.getDataString());
+        assertTrue(intent.hasCategory(android.content.Intent.CATEGORY_BROWSABLE));
+        assertTrue(f.backend.pending.isEmpty());
     }
     @Test public void managementReadFailureHasRetryFeedbackAndRecoveryClearsIt() throws Exception {
         Fixture f=new Fixture("home"); f.page.start(); f.backend.connected();

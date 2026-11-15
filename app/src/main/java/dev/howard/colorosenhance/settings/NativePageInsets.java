@@ -1,6 +1,5 @@
 package dev.howard.colorosenhance.settings;
 
-import android.app.Activity;
 import android.graphics.Insets;
 import android.view.View;
 import android.view.ViewGroup;
@@ -13,16 +12,29 @@ final class NativePageInsets {
     private final View decor;
     private final int left,top,right,bottom;
     private final boolean clip;
-    private boolean alignTop,closed;
+    private boolean alignTop,closed,active;
     private final ViewTreeObserver.OnGlobalLayoutListener changed=this::update;
-    NativePageInsets(ViewGroup list,Activity owner,boolean firstOpen){
-        this.list=list;decor=owner.getWindow().getDecorView();
+    NativePageInsets(ViewGroup list,View decor,boolean firstOpen){
+        this.list=list;this.decor=decor;
         alignTop=firstOpen;
         left=list.getPaddingLeft();top=list.getPaddingTop();right=list.getPaddingRight();bottom=list.getPaddingBottom();clip=list.getClipToPadding();
-        list.setClipToPadding(false);decor.getViewTreeObserver().addOnGlobalLayoutListener(changed);update();
+        list.setClipToPadding(false);resume();update();
     }
-    void close(){closed=true;if(decor.getViewTreeObserver().isAlive())decor.getViewTreeObserver().removeOnGlobalLayoutListener(changed);list.setPadding(left,top,right,bottom);list.setClipToPadding(clip);}
+    boolean owns(ViewGroup view){return list==view && !closed;}
+    void resume(){
+        if(closed || active)return;
+        // onStart runs before Settings restores its Toolbar in onResume. Measuring
+        // here briefly removes the toolbar's padding and shifts RecyclerView's anchor.
+        // Keep the old geometry until the next layout sees the restored toolbar.
+        active=true;decor.getViewTreeObserver().addOnGlobalLayoutListener(changed);
+    }
+    // Keep padding and the RecyclerView anchor while another page is on top.
+    void pause(){
+        active=false;if(decor.getViewTreeObserver().isAlive())decor.getViewTreeObserver().removeOnGlobalLayoutListener(changed);
+    }
+    void close(){if(closed)return;pause();closed=true;list.setPadding(left,top,right,bottom);list.setClipToPadding(clip);}
     void update(){
+        if(!active || closed)return;
         WindowInsets window=decor.getRootWindowInsets();if(window==null || list.getHeight()==0)return;
         Insets insets=window.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout()|WindowInsets.Type.ime());
         int[] at=new int[2],origin=new int[2];list.getLocationOnScreen(at);decor.getLocationOnScreen(origin);
@@ -40,7 +52,7 @@ final class NativePageInsets {
             // RecyclerView preserves its old anchor when padding is added after its first layout.
             // Align only a newly opened page; returning to an existing page keeps its scroll.
             list.post(()->{
-                if(closed)return;
+                if(closed || !active)return;
                 try{HostReflection.method(list.getClass(),"scrollToPosition",int.class).invoke(list,0);}
                 catch(ReflectiveOperationException unavailable){ /* Host without RecyclerView keeps native scrolling. */ }
             });

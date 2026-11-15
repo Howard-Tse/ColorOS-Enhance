@@ -32,6 +32,7 @@ final class SettingsHostAdapter {
         Method stop=HostReflection.method(fragment,"onStop");
         Method save=HostReflection.method(fragment,"onSaveInstanceState",Bundle.class);
         Method destroy=HostReflection.method(fragment,"onDestroy");
+        Method destroyView=HostReflection.method(fragment,"onDestroyView");
         Method validate=HostReflection.method(settings,"isValidFragment",String.class);
         Method resume=HostReflection.method(system,"onResume");
         after(create,object->{
@@ -65,7 +66,8 @@ final class SettingsHostAdapter {
         }catch(ReflectiveOperationException missing){module.warn("数值滑条接口不可用，保留手动输入",missing);}
         before(stop,object->{ NativeSettingsPage page=pages.get(object); if(page!=null) page.stop(); });
         before(save,object->{ NativeSettingsPage page=pages.get(object); if(page!=null) page.clearInputs(); });
-        before(destroy,object->{ NativeSettingsPage page=pages.remove(object); if(page!=null) page.stop(); });
+        before(destroyView,object->{ NativeSettingsPage page=pages.get(object); if(page!=null) page.releaseView(); });
+        before(destroy,object->{ NativeSettingsPage page=pages.remove(object); if(page!=null){page.stop();page.releaseView();} });
         module.hook(validate).intercept(chain->{
             Object target=chain.getThisObject();
             if(target instanceof Activity activity && "com.android.settings.SubSettings".equals(target.getClass().getName())

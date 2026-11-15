@@ -6,3 +6,4 @@ com.howard.simpinautounlock.hook.ModuleMain
 dev.howard.colorosenhance.settings.SettingsModule
 dev.howard.colorosenhance.installer.InstallerModule
 dev.howard.colorosenhance.icons.StatusIconsModule
+dev.howard.colorosenhance.controlcenter.ControlCenterModule

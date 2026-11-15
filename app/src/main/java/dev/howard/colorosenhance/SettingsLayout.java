@@ -17,7 +17,8 @@ public final class SettingsLayout {
             new Page("icons_visibility","icons","仅下拉后显示","逐项选择时钟、电池与系统图标","icons","icons"),
             new Page("sim_slots","sim","卡槽与 PIN","两张 SIM 卡分别管理","","sim")
     );
-    public static final List<String> DISPLAY_GROUPS=List.of("cloud","icons","battery","aod");
+    public static final List<String> DISPLAY_GROUPS=List.of("cloud","control_center","icons","battery","aod");
+    public static final List<String> HOME_GROUPS=List.of("cloud","control_center","icons","aod","battery");
     public static final List<String> SYSTEM_GROUPS=List.of("installer","sim");
     private SettingsLayout() { }
     public static Page page(String route) {

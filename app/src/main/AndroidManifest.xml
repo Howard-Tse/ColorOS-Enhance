@@ -1,4 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.INTERNET" />
     <permission android:name="${applicationId}.sim.permission.CONFIGURE" android:protectionLevel="signature" />
     <uses-permission android:name="${applicationId}.sim.permission.CONFIGURE" />
     <queries>
@@ -17,6 +18,7 @@
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.INFO" /></intent-filter>
         </activity>
         <activity android:name=".migration.MigrationActivity" android:exported="false" />
+        <activity android:name=".updates.UpdateActivity" android:exported="true" />
         <activity-alias android:name=".Launcher" android:targetActivity=".MainActivity" android:enabled="true" android:exported="true">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity-alias>

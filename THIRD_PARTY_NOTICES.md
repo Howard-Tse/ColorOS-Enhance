@@ -2,7 +2,7 @@
 
 ColorOS Enhance original code is MIT, Copyright (c) 2026 Howard. Third-party components retain their own licenses and notices.
 
-This inventory covers the 110 distinct coordinates resolved for version 1.30.0 releaseRuntimeClasspath. Android platform APIs are provided by the device, and libxposed API is a compile-only dependency.
+This inventory covers the 110 distinct coordinates resolved for version 1.31.0 releaseRuntimeClasspath (unchanged from 1.30.0). Android platform APIs are provided by the device, and libxposed API is a compile-only dependency.
 
 The attributions and complete applicable license texts are shipped in [assets/licenses](app/src/main/assets/licenses): NOTICE.txt, project-mit.txt, materialkolor-mit.txt, and ui-apache-2.0.txt. MaterialKolor text is taken from upstream tag 5.0.1. AndroidX and Google Maven metadata, Maven Central POMs, and upstream licenses were checked; Guava ListenableFuture inherits its Apache license from guava-parent 26.0-android.
 

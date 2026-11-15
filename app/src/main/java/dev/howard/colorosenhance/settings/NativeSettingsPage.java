@@ -33,6 +33,7 @@ final class NativeSettingsPage {
     private NativePageInsets pageInsets;
     private boolean insetsInitialized;
     private final Map<String,Bundle> states=new HashMap<>();
+    private final Set<String> freshGroups=new HashSet<>();
     private final Map<String,Integer> numberPreviews=new HashMap<>();
     private final Map<String,String> readNotices=new LinkedHashMap<>();
     private final Set<String> busy=new HashSet<>(),reading=new HashSet<>(),readAgain=new HashSet<>();
@@ -86,6 +87,11 @@ final class NativeSettingsPage {
             jump(integration,"restart_scopes","一键重启作用域",()->dialogs.confirm("重启三个作用域",EnhanceApplication.RESTART_CONFIRMATION,()->{
                 Bundle request=command("restart_scopes"); request.putBoolean("confirmed",true); managementAction(request);
             }));
+            Object about=category("about","关于");
+            Object updates=jump(about,"check_updates","检查更新",()->dev.howard.colorosenhance.updates.UpdateLinks.check(context));
+            host.call(updates,"setSummary","当前版本 "+dev.howard.colorosenhance.BuildConfig.VERSION_NAME+" · 在模块应用中手动检查正式版");
+            Object repository=jump(about,"github_repository","GitHub 仓库",()->dev.howard.colorosenhance.updates.UpdateLinks.repository(context));
+            host.call(repository,"setSummary","源码、使用说明与问题反馈");
         } else if("sim_slots".equals(route)) {
             for(int slot=0;slot<2;slot++) {
                 final int id=slot;
@@ -199,11 +205,14 @@ final class NativeSettingsPage {
     }
     void start() {
         if(active) return;
-        active=true; int epoch=++generation; states.clear(); numberPreviews.clear(); managementState=null; readNotices.clear(); simLoaded=false; notice="正在连接…"; render();
+        // Retain the acknowledged presentation while reconnecting. Clearing it changes row
+        // visibility/heights during the back transition; cached values are read-only until refreshed.
+        active=true; int epoch=++generation; freshGroups.clear(); numberPreviews.clear(); readNotices.clear(); simLoaded=false; notice="正在连接…"; render();
         try {
             Object owner=host.call(fragment,"getActivity");Object list=host.call(fragment,"getListView");
             if(owner instanceof Activity activity && list instanceof android.view.ViewGroup group){
-                pageInsets=new NativePageInsets(group,activity,!insetsInitialized);insetsInitialized=true;
+                if(pageInsets!=null && pageInsets.owns(group))pageInsets.resume();
+                else {releaseView();pageInsets=new NativePageInsets(group,activity.getWindow().getDecorView(),!insetsInitialized);insetsInitialized=true;}
             }
         }catch(ReflectiveOperationException|RuntimeException unavailable){ /* Older host retains its own padding. */ }
         backend=factory.create(context,new SettingsBridgeClient.Listener() {
@@ -212,7 +221,7 @@ final class NativeSettingsPage {
                 if(connected) { notice=""; refresh(true); }
                 else {
                     if ("cloud_media".equals(pageRoute)) dialogs.clear();
-                    notice="连接不可用，点按重试。请确认模块已启用。"; states.clear(); numberPreviews.clear(); managementState=null; simLoaded=false; busy.clear(); visibleBusy.clear(); busyTickets.clear(); render();
+                    notice="连接不可用，点按重试。请确认模块已启用。"; freshGroups.clear(); states.clear(); numberPreviews.clear(); managementState=null; simLoaded=false; busy.clear(); visibleBusy.clear(); busyTickets.clear(); render();
                 }
             }
             public void onChanged() {
@@ -224,10 +233,11 @@ final class NativeSettingsPage {
         backend.connect();
     }
     void stop() {
-        active=false; generation++; refreshQueued=false; busy.clear(); numberPreviews.clear(); visibleBusy.clear(); busyTickets.clear(); reading.clear(); readAgain.clear();
+        active=false; generation++; refreshQueued=false; freshGroups.clear(); busy.clear(); numberPreviews.clear(); visibleBusy.clear(); busyTickets.clear(); reading.clear(); readAgain.clear();
         dialogs.clear(); if(backend!=null) backend.close(); backend=null; render();
-        if(pageInsets!=null){pageInsets.close();pageInsets=null;}
+        if(pageInsets!=null)pageInsets.pause();
     }
+    void releaseView(){if(pageInsets!=null){pageInsets.close();pageInsets=null;}}
     void clearInputs() { dialogs.clear(); }
     void bindNumber(Object preference,android.view.ViewGroup row){
         NativeNumberRow binding=numberRows.get(preference);if(binding!=null)binding.bind(row,host);
@@ -286,14 +296,14 @@ final class NativeSettingsPage {
     }
     private boolean receiveManagement(Bundle response) {
         if(response.containsKey("launcher_visible") && response.containsKey("management_revision")) {
-            if(managementState==null || response.getLong("management_revision")>=managementState.getLong("management_revision")) {
-                managementState=new Bundle(response); return true;
+            if(!freshGroups.contains("management") || managementState==null || response.getLong("management_revision")>=managementState.getLong("management_revision")) {
+                managementState=new Bundle(response); freshGroups.add("management"); return true;
             }
-        } else managementState=null;
+        } else {managementState=null;freshGroups.remove("management");}
         return false;
     }
     private void managementAction(Bundle request) {
-        if(!connected() || managementState==null || busy.contains("management")) return;
+        if(!connected() || !freshGroups.contains("management") || managementState==null || busy.contains("management")) return;
         if("restart_scopes".equals(request.getString("op")) && managementState.getBoolean("restarting")) return;
         beginBusy("management","正在处理…");
         send(request,response->{
@@ -317,21 +327,21 @@ final class NativeSettingsPage {
         });
     }
     private boolean receiveConfig(String group,Bundle response) {
-        Bundle previous=states.get(group);
+        Bundle previous=freshGroups.contains(group)?states.get(group):null;
         if(response.containsKey("revision") && response.getBundle("values")!=null) {
             if(previous==null || response.getLong("revision")>=previous.getLong("revision")) {
-                states.put(group,new Bundle(response)); return true;
+                states.put(group,new Bundle(response)); freshGroups.add(group); return true;
             }
-        } else states.remove(group);
+        } else {states.remove(group);freshGroups.remove(group);}
         return false;
     }
     private boolean writable(String group) {
         Bundle state=states.get(group);
-        return connected() && !busy.contains(group) && state!=null && state.getBoolean("writable");
+        return connected() && freshGroups.contains(group) && !busy.contains(group) && state!=null && state.getBoolean("writable");
     }
     private boolean displayedWritable(String group) {
         Bundle state=states.get(group);
-        return connected() && !visibleBusy.contains(group) && state!=null && state.getBoolean("writable");
+        return connected() && freshGroups.contains(group) && !visibleBusy.contains(group) && state!=null && state.getBoolean("writable");
     }
     private Bundle values(String group) { Bundle state=states.get(group); return state==null ? null : state.getBundle("values"); }
     private boolean flag(String group,String key,boolean fallback) { Bundle values=values(group); return values==null ? fallback : values.getBoolean(key,fallback); }
@@ -479,7 +489,7 @@ final class NativeSettingsPage {
                     summary(controls.get("open_"+group.key()),summary+" · "+group.summary());
                 }
                 checked("integration.show_entry",flag("integration","show_entry",true)); enabled("integration.show_entry",displayedWritable("integration"));
-                boolean managementReady=connected() && managementState!=null && !visibleBusy.contains("management");
+                boolean managementReady=connected() && freshGroups.contains("management") && managementState!=null && !visibleBusy.contains("management");
                 checked("launcher_visible",managementState==null || managementState.getBoolean("launcher_visible"));
                 enabled("launcher_visible",managementReady);
                 enabled("restart_scopes",managementReady && !managementState.getBoolean("restarting"));

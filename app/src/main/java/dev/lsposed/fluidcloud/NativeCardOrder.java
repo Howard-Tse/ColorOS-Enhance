@@ -5,7 +5,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -63,18 +62,7 @@ final class NativeCardOrder {
         viewModel=Reflect.uniqueField(container,field->field.getDeclaringClass()==container && Reflect.instance(field)
                 && NativeCardLaunch.find(field.getType()).isPresent());
         launch=NativeCardLaunch.find(viewModel.getType()).orElseThrow(()->new NoSuchMethodException("Native card launch entry"));
-        data = Reflect.uniqueField(container, field -> field.getDeclaringClass()==container && Reflect.instance(field)
-                && (field.getType() == Object.class || List.class.isAssignableFrom(field.getType())));
-        Method found = null;
-        for (Method method : container.getDeclaredMethods()) {
-            if (Modifier.isStatic(method.getModifiers()) || method.getReturnType() != void.class
-                    || method.getParameterCount() != 0 || method.getName().startsWith("on")) continue;
-            if (!DexFieldUse.fields(method).contains(data)) continue;
-            if (found != null) throw new NoSuchMethodException("Ambiguous native card data update");
-            found = method;
-        }
-        if (found == null) throw new NoSuchMethodException("Native card data update");
-        found.setAccessible(true); update = found;
+        NativeCardList list=NativeCardList.of(container);data=list.data;update=list.update;
         this.main = main; this.enabled = enabled;
     }
     static <T> List<T> prioritize(List<T> source, String selected, Function<T, String> key) {

@@ -68,6 +68,7 @@ final class CloudExtras {
         NativeCapsuleSize size;
         NativeCardOrder order;
         NativeCardDim dim;
+        NativeCardDismissal dismissal;
         NativeMediaWave wave;
         final View root;
         final android.view.ViewTreeObserver.OnGlobalLayoutListener waveLayout=()->{
@@ -162,6 +163,24 @@ final class CloudExtras {
             }
             start=hooks.size();
             try{
+                dismissal=new NativeCardDismissal(lookup.load(NativeCameraCard.VIEWS+"CardContainer"),main,
+                        ()->!closing&&module.config.enabled());
+                dismissal.failed=error->module.error("Native card exit cleanup failed",error);
+                dismissal.trace=module::info;
+                hooks.add(module.hook(dismissal.update).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain->{
+                    boolean[] deferred={false};safe(()->deferred[0]=dismissal.defer((View)chain.getThisObject()));
+                    return deferred[0]?null:chain.proceed();
+                }));
+                hooks.add(module.hook(dismissal.detach).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain->{
+                    Object result=chain.proceed();safe(()->dismissal.detached((View)chain.getThisObject()));return result;
+                }));
+                module.info("Native card exit holder retention installed");
+            }catch(ReflectiveOperationException|RuntimeException|LinkageError error){
+                rollback(start);if(dismissal!=null)dismissal.close();dismissal=null;
+                module.error("Native card exit retention unavailable; native lifecycle retained",error);
+            }
+            start=hooks.size();
+            try{
                 if(appearance==null || dim==null)throw new NoSuchMethodException("Native capsule selection/card lifecycle");
                 order=new NativeCardOrder(lookup,appearance.legacy,main,()->!closing&&module.config.selectedCardFirst());
                 order.failed=error->module.error("Card order unavailable; native ordering retained",error);
@@ -193,6 +212,7 @@ final class CloudExtras {
             catch(ClassNotFoundException missing){lookup.load("a5.q");return true;}
         }
         void refresh(){
+            if(dismissal!=null)safe(dismissal::refresh);
             if(size!=null)for(View root:new ArrayList<>(roots))safe(()->size.refresh(root,closing?CapsuleSize.OEM:module.config.capsuleSize()));
             if(order!=null){safe(()->order.selection(root));order.schedule();}
             if(appearance!=null)safe(()->appearance.restoreDisabled(!closing&&module.config.hideCapsuleStroke(),!closing&&module.config.hideCapsuleArrows()));
@@ -207,6 +227,7 @@ final class CloudExtras {
                 if(ancestor==root){order.selection(view);return;}
         }
         void close(){closing=true;
+            if(dismissal!=null)dismissal.close();
             if(order!=null)order.close();if(size!=null)size.close();
             if(root.getViewTreeObserver().isAlive())root.getViewTreeObserver().removeOnGlobalLayoutListener(waveLayout);
             if(module.mediaWaves!=null)module.mediaWaves.removePlugin(wave);

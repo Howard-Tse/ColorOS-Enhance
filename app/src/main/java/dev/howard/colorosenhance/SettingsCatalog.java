@@ -59,7 +59,7 @@ public final class SettingsCatalog {
     }
     public record Group(String key, String title, String summary, List<Item> items) { }
     public static String masterTitle(Group group) {
-        return "启用" + group.title() + (List.of("aod", "cloud", "battery", "icons").contains(group.key()) ? "增强" : "");
+        return "启用" + group.title() + (List.of("aod", "cloud", "battery", "icons", "control_center").contains(group.key()) ? "增强" : "");
     }
     private static Item flag(String section,String key,String title,String description) {
         return flag(section,key,title,description,false);
@@ -185,6 +185,12 @@ public final class SettingsCatalog {
             value("文字位置","vertical_offset_enabled","垂直偏移","基于系统原位置叠加，正值向下。","vertical_offset_tenths_dp",0,-30,30,1,10,"dp")
         )),
         new Group("icons", "状态栏图标", "蓝牙显示规则与各图标仅下拉后显示", List.of()),
+        new Group("control_center", "控制中心", "磁贴纵向展开、整页滚动与横屏分页过渡", List.of(
+            flag("磁贴布局","vertical_portrait","竖屏磁贴纵向展开","把下方分页磁贴接成连续行，上下滑动整个控制中心；滚动到底后再次上滑，或从屏幕底部上滑可收起。进入编辑时暂时恢复原厂布局。"),
+            flag("磁贴布局","vertical_landscape","横屏磁贴纵向展开","保留原生分栏，将右侧磁贴向下展开并纵向滚动。底部上滑可收起，编辑模式保持原厂处理。"),
+            new Item("分页过渡","fade_landscape","横屏分页边缘渐隐","在原厂左右翻页时，让分页外侧的越界磁贴渐变淡出；静止时不遮挡正常磁贴，外侧范围按相邻控件间距限制。",false,
+                    null,0,0,0,1,1,"",new Visibility("vertical_landscape",false),null)
+        )),
         new Group("aod", "全景息屏", "防误触、亮度、背景与隐藏元素", List.of(
             flag("触摸","block_tap","单击防误触，双击唤醒","仅全景息屏生效，保留系统指纹解锁。"),
             value("亮度与背景","scale_enabled","自动亮度比例","保留系统亮度上限；下次亮度更新或重新息屏生效。","scale",100,75,500,1,1,"%"),
