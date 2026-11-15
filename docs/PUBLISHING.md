@@ -34,7 +34,7 @@ GitHub 登录在本机完成，不需要把账号密码或访问令牌交给协�
 ## 首次公开发布 · 2026-11-15
 
 - [源码仓库](https://github.com/Howard-Tse/ColorOS-Enhance)已公开，原创代码采用 MIT，提交使用 Howard 与 GitHub noreply 邮箱。
-- [源码仓库 1.30.0 预发布](https://github.com/Howard-Tse/ColorOS-Enhance/releases/tag/69-1.30.0)和[官方模块仓库同版本](https://github.com/Xposed-Modules-Repo/io.github.howard_tse.colorosenhance/releases/tag/69-1.30.0)均附签名 APK 与 SHA-256 校验文件，两份 APK 的 GitHub 摘要与本地一致。
+- [源码仓库 1.30.0 正式发布](https://github.com/Howard-Tse/ColorOS-Enhance/releases/tag/69-1.30.0)和[官方模块仓库同版本](https://github.com/Xposed-Modules-Repo/io.github.howard_tse.colorosenhance/releases/tag/69-1.30.0)均附签名 APK 与 SHA-256 校验文件，两份 APK 的 GitHub 摘要与本地一致。该版本已从预发布改为正式发布并设为 Latest，APK、签名和版本号保持不变。
 - [收录申请 #2612](https://github.com/Xposed-Modules-Repo/submission/issues/2612)已批准；维护邀请已接受，官方仓库已补齐 README、SUMMARY、许可证、简介和主页。源码不放入官方模块仓库。
 - 官方简介／主页通过网页保存。上传完成不代表已在模块网站或管理器索引中显示，展示延迟以官方索引处理为准。
 - 发布前 1129 项测试通过，Debug／Release Lint 无错误；源码和 APK 的发布检查无未解决项。私钥、设备配置和诊断资料仍留在忽略目录，没有随 Git 或 Release 上传。
@@ -42,6 +42,6 @@ GitHub 登录在本机完成，不需要把账号密码或访问令牌交给协�
 ## 后续验证
 
 - 新包自动迁移和完整重启交接已通过真机验收；新图标的桌面深浅切换仍待验收。
-- 自然触发并确认自动弹出胶囊卡片的位置修正。在确认前，1.30.0 标记为预发布版本。
+- 自然触发并确认自动弹出胶囊卡片的位置修正，继续收集不同机型和固件的反馈。
 
 检查脚本是启发式筛查，不能替代对许可证、账号关联、二进制和新截图的人工复核。
