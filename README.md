@@ -6,7 +6,7 @@
 
 模块包含系统私有接口适配，不同机型、主题及系统更新后的效果可能不同。本项目不是 OPPO 或 OnePlus 官方产品。
 
-下载与反馈：[Release 下载](https://github.com/Howard-Tse/ColorOS-Enhance/releases) · [问题反馈](https://github.com/Howard-Tse/ColorOS-Enhance/issues)。首次公开的 1.30.0 作为预发布版本提供，请先阅读迁移说明与已知验证限制。
+下载与反馈：[Release 下载](https://github.com/Howard-Tse/ColorOS-Enhance/releases) · [LSPosed 模块仓库](https://github.com/Xposed-Modules-Repo/io.github.howard_tse.colorosenhance) · [问题反馈](https://github.com/Howard-Tse/ColorOS-Enhance/issues)。首次公开的 1.30.0 作为预发布版本提供，请先阅读迁移说明与已知验证限制。
 
 ## 功能
 

@@ -2,7 +2,7 @@
 
 本文件只记录公开发布流程，不包含设备标识、私有签名或账号凭据。
 
-## 维护者需要确定的内容
+## 已确定的发布信息
 
 1. GitHub 账号为 [Howard-Tse](https://github.com/Howard-Tse)，公开作者名为 Howard；源码仓库为 [ColorOS-Enhance](https://github.com/Howard-Tse/ColorOS-Enhance)。
 2. 维护者已选择 MIT，见根目录 [LICENSE](../LICENSE)。运行时依赖清单见 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)，第三方原有许可证与署名继续保留。
@@ -31,10 +31,17 @@ GitHub 登录在本机完成，不需要把账号密码或访问令牌交给协�
 - 至少创建一个包含 APK 附件的有效 Release；tag 按 `versionCode-versionName`，例如当前工作树对应 `69-1.30.0`，Release 标题用版本名，正文写变更说明。
 - 在同一次 Release 发布中带上 APK；仅替换附件可能不会触发仓库机器人的更新流程。审核和收录时间以官方为准。
 
-## 当前尚待完成
+## 首次公开发布 · 2026-11-15
+
+- [源码仓库](https://github.com/Howard-Tse/ColorOS-Enhance)已公开，原创代码采用 MIT，提交使用 Howard 与 GitHub noreply 邮箱。
+- [源码仓库 1.30.0 预发布](https://github.com/Howard-Tse/ColorOS-Enhance/releases/tag/69-1.30.0)和[官方模块仓库同版本](https://github.com/Xposed-Modules-Repo/io.github.howard_tse.colorosenhance/releases/tag/69-1.30.0)均附签名 APK 与 SHA-256 校验文件，两份 APK 的 GitHub 摘要与本地一致。
+- [收录申请 #2612](https://github.com/Xposed-Modules-Repo/submission/issues/2612)已批准；维护邀请已接受，官方仓库已补齐 README、SUMMARY、许可证、简介和主页。源码不放入官方模块仓库。
+- 官方简介／主页通过网页保存。上传完成不代表已在模块网站或管理器索引中显示，展示延迟以官方索引处理为准。
+- 发布前 1129 项测试通过，Debug／Release Lint 无错误；源码和 APK 的发布检查无未解决项。私钥、设备配置和诊断资料仍留在忽略目录，没有随 Git 或 Release 上传。
+
+## 后续验证
 
 - 新包自动迁移和完整重启交接已通过真机验收；新图标的桌面深浅切换仍待验收。
 - 自然触发并确认自动弹出胶囊卡片的位置修正。在确认前，1.30.0 标记为预发布版本。
-- 完成 LSPosed 收录申请、接受维护邀请并按官方仓库规范补齐说明与 APK Release。源码仅上传个人源码仓库。
 
 检查脚本是启发式筛查，不能替代对许可证、账号关联、二进制和新截图的人工复核。
