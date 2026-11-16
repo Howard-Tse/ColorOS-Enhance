@@ -40,6 +40,19 @@ public class NativeShadeLaunchTest {
         bridge.finish(data.g,()->{});assertEquals(List.of("layer","collapse"),events);assertFalse(bridge.busy());
         idle(4000);assertEquals(2,events.size());assertTrue(errors.isEmpty());
     }
+    @Test public void directCapsuleLaunchUsesTheSameLayerAndCommittedDismissalAsACard(){
+        var host=new FrameLayout(root.getContext());var capsule=new FrameLayout(root.getContext());
+        root.addView(host);host.addView(capsule);layer.defer=true;
+        assertTrue(bridge.begin(NativeCardLaunch.animationSource(capsule,host),shade,()->valid));
+        assertNull(bridge.ready(new Data(root)));assertTrue(events.isEmpty());
+        Data data=new Data(capsule);assertSame(data.a,bridge.ready(data));assertEquals(List.of("layer"),events);
+        bridge.finishSurface(data.b.value,()->events.add("native-window-cleanup"));
+        bridge.finish(data.g,()->events.add("native-remote-finish"));
+        assertEquals(List.of("layer","collapse"),events);assertTrue(bridge.busy());
+        layer.completions.removeFirst().run();
+        assertEquals(List.of("layer","collapse","native-window-cleanup","native-remote-finish"),events);
+        assertFalse(bridge.busy());
+    }
     @Test public void unrelatedNativeAnimationCannotAdoptOurPanelOrCompleteOurLaunch(){
         bridge.begin(root,shade,()->valid);Data other=new Data(new FrameLayout(root.getContext()));
         assertNull(bridge.ready(other));bridge.finish(other.g,()->{});assertTrue(events.isEmpty());assertTrue(bridge.busy());

@@ -1,6 +1,6 @@
 package dev.lsposed.fluidcloud;
 
-/** Reuses Android's native 1024-point FFT. All bin work stays on the existing capture worker. */
+/** Six bands over Visualizer-format 1024-point FFT data; all bin work stays on the capture worker. */
 final class MediaWaveSpectrum {
     static final int SIZE=1024;
     private final int[] boundaries = new int[MediaWaveBands.EDGE_COUNT];

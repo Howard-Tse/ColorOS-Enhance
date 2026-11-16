@@ -17,7 +17,7 @@ public class MediaWaveCaptureTest {
         void next(){delays.removeFirst();tasks.removeFirst().run();}
     }
     private static final class Backend implements MediaWaveCapture.Backend {
-        boolean safe=true,readable=true,unsafe;int checks,opens,closes,reads,notReady,transientReads;Runnable duringCheck=()->{},duringOpen=()->{};
+        boolean safe=true,readable=true,unsafe;int checks,opens,closes,reads,notReady,transientReads,warmupReads;Runnable duringCheck=()->{},duringOpen=()->{};
         final List<String> events=new ArrayList<>();
         public boolean safe(MediaWaveCapture.Request request){checks++;duringCheck.run();return safe;}
         public MediaWaveCapture.Route route(MediaWaveCapture.Request request)throws Exception{
@@ -28,7 +28,9 @@ public class MediaWaveCaptureTest {
             if(notReady-->0)throw new MediaWaveCapture.NotReady(new RuntimeException());
             opens++;events.add("open"+request.session());duringOpen.run();
             return new MediaWaveCapture.Source(){
-                public MediaWaveLevels read()throws Exception{reads++;if(transientReads-->0)throw new MediaWaveCapture.NotReady("temporary");if(!readable)throw new IllegalStateException();return MediaWaveLevels.SILENT;}
+                private boolean filling;
+                public MediaWaveLevels read()throws Exception{reads++;filling=warmupReads-->0;if(transientReads-->0)throw new MediaWaveCapture.NotReady("temporary");if(!readable)throw new IllegalStateException();return MediaWaveLevels.SILENT;}
+                public boolean buffering(){return filling;}
                 public void close(){closes++;events.add("close");}
             };
         }
@@ -36,6 +38,20 @@ public class MediaWaveCaptureTest {
     private static final class Fixture {
         final Clock clock=new Clock();final Backend backend=new Backend();int outputs,fallbacks;
         final MediaWaveCapture capture=new MediaWaveCapture(clock,backend,(ticket,levels)->outputs++,(ticket,reason)->fallbacks++);
+    }
+    @Test public void audibleTimelineWarmupKeepsOneEffectAndDoesNotPublishAnArtificialPause(){
+        var f=new Fixture();f.backend.warmupReads=3;f.capture.request(A);f.clock.next();f.clock.next();f.clock.next();
+        assertEquals(0,f.outputs);assertEquals(0,f.fallbacks);assertEquals(1,f.backend.opens);assertEquals(0,f.backend.closes);
+        f.clock.next();assertEquals(1,f.outputs);
+        f.capture.request(null);while(!f.clock.tasks.isEmpty())f.clock.next();assertEquals(1,f.backend.closes);
+    }
+    @Test public void aNeverSettlingTimelineCannotLeaveAnUnboundedSamplingLoop(){
+        var f=new Fixture();f.backend.warmupReads=100;f.capture.request(A);f.clock.next();
+        f.clock.time=3501;f.clock.next();assertEquals(1,f.fallbacks);assertEquals(1,f.backend.closes);assertTrue(f.clock.tasks.isEmpty());
+    }
+    @Test public void cancellationDuringWarmupReleasesWithoutPublishingAnOldFrame(){
+        var f=new Fixture();f.backend.warmupReads=100;f.capture.request(A);f.clock.next();
+        f.capture.request(null);while(!f.clock.tasks.isEmpty())f.clock.next();assertEquals(0,f.outputs);assertEquals(1,f.backend.closes);
     }
     @Test public void unknownOrUnsafeRoutesNeverOpenAnyAudioEffectAndDoNotRetryOnEachVisibilityChange(){
         var f=new Fixture();f.backend.safe=false;f.capture.request(A);while(!f.clock.tasks.isEmpty())f.clock.next();

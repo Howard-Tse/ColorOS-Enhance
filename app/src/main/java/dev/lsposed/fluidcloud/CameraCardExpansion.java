@@ -228,6 +228,8 @@ final class CameraCardExpansion {
                 Object[] args = {view, bounds, chain.getArg(2), chain.getArg(3), chain.getArg(4)};
                 Object result = chain.proceed(args);
                 safe(() -> cards.align(view, true));
+                if (android.util.Log.isLoggable("COSCameraCard", android.util.Log.DEBUG))
+                    module.info("CameraCard instantFrame " + cards.describeInstantFrame(view));
                 return result;
             }));
             pending.add(module.hook(instant.touchRegion).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
@@ -237,6 +239,32 @@ final class CameraCardExpansion {
                 safe(() -> result[0] = instant.inputRegion((ViewGroup) chain.getArg(0), original, true));
                 return result[0];
             }));
+            if (!cards.legacy) try {
+                // Discover the native InstantCardAppearScene by its constructor,
+                // not its obfuscated class/method name. Older paths keep their
+                // existing layout/blur hooks if this optional contract is absent.
+                Class<?> scene = PluginClasses.of(instant.type).unique(
+                        "com.oplus.systemui.plugins.seedling.card.animation.", candidate -> {
+                            try { candidate.getDeclaredConstructor(instant.type, boolean.class, View.class); return true; }
+                            catch (NoSuchMethodException missing) { return false; }
+                        });
+                var owner = Reflect.uniqueField(scene, field -> Reflect.instance(field) && field.getType() == instant.type);
+                Method build = Reflect.uniqueMethod(scene, method -> !java.lang.reflect.Modifier.isStatic(method.getModifiers())
+                        && method.getParameterCount() == 0 && method.getReturnType().getName()
+                        .startsWith("com.oplus.systemui.plugins.seedling.engine.animatorengine."));
+                if (!module.deoptimize(build)) throw new IllegalStateException("Instant appear builder could not be deoptimized");
+                pending.add(module.hook(build).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
+                    if (!failed && Looper.myLooper() == Looper.getMainLooper()) safe(() -> {
+                        ViewGroup container = (ViewGroup) Reflect.get(owner, chain.getThisObject());
+                        instant.beforeAppearScene(container, enabled());
+                        trace(cards, "instantBeforeAppear", container);
+                    });
+                    return chain.proceed();
+                }));
+                module.info("Native instant appear measurement preparation installed");
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+                module.info("Native instant appear builder unavailable; retaining existing instant geometry");
+            }
             hooks.addAll(pending);
             module.info("Native instant camera card geometry installed");
             return instant;

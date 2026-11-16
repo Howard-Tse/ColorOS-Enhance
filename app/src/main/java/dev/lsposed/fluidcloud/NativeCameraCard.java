@@ -355,9 +355,10 @@ final class NativeCameraCard {
     }
     void updateSurface(View card, boolean enabled) {
         float blend = surfaceBlend(card, enabled);
+        updateMaterialOutline(card);
         var reference = headers.get(card);
         CameraHeaderSurface header = reference == null ? null : reference.get();
-        if (header != null) header.update(blend);
+        if (header != null) { sizePaintLayer(header, card); header.update(blend); }
         if (blend >= 1) { restoreSurface(card); return; }
         float current = card.getElevation(); Elevation previous = elevations.get(card);
         float nativeValue = previous != null && current == previous.appliedValue() ? previous.nativeValue() : current;
@@ -540,14 +541,21 @@ final class NativeCameraCard {
         int index = body == null ? 0 : card.indexOfChild(body);
         if (surface.getParent() == null) card.addView(surface, Math.max(0, index), new FrameLayout.LayoutParams(0, 0));
         surface.update(paints);
+        updateMaterialOutline(card);
+    }
+    private void updateMaterialOutline(View card) {
+        var reference = materialSurfaces.get(card);
+        CameraMaterialSurface surface = reference == null ? null : reference.get();
+        if (surface == null) return;
+        sizePaintLayer(surface, card);
+        // Native scale/size fragments can reuse the parent's recorded display
+        // list. Its material child has an independent RenderNode outline: keep
+        // that clip in the same frame, rather than waiting for dispatchDraw at
+        // the end of the scene to reveal the full contour.
         Rect mask = activeMorphMask(card);
+        Rect material = mask == null ? new Rect(0, 0, card.getWidth(), card.getHeight()) : new Rect(mask);
         surface.updateOutline(new MaterialOutline(card.getOutlineProvider(), mask == null ? null : new Rect(mask),
-                card.getWidth(), card.getHeight()));
-        if (surface.getWidth() != card.getWidth() || surface.getHeight() != card.getHeight()) {
-            surface.measure(View.MeasureSpec.makeMeasureSpec(card.getWidth(), View.MeasureSpec.EXACTLY),
-                    View.MeasureSpec.makeMeasureSpec(card.getHeight(), View.MeasureSpec.EXACTLY));
-            surface.layout(0, 0, card.getWidth(), card.getHeight());
-        }
+                card.getWidth(), card.getHeight()), material);
     }
     private void collectMaterials(View view, View body, List<CameraMaterialSurface.Paint> paints) {
         if (view instanceof CameraMaterialSurface || view instanceof CameraHeaderSurface || view.getVisibility() != View.VISIBLE) return;
@@ -607,12 +615,19 @@ final class NativeCameraCard {
         if (header.getParent() == null) card.addView(header, new FrameLayout.LayoutParams(0, 0));
         if (header.getParent() != card) return;
         if (card.indexOfChild(header) != card.getChildCount() - 1) header.bringToFront();
-        if (header.getWidth() != card.getWidth() || header.getHeight() != card.getHeight()) {
-            header.measure(View.MeasureSpec.makeMeasureSpec(card.getWidth(), View.MeasureSpec.EXACTLY),
-                    View.MeasureSpec.makeMeasureSpec(card.getHeight(), View.MeasureSpec.EXACTLY));
-            header.layout(0, 0, card.getWidth(), card.getHeight());
-        }
+        sizePaintLayer(header, card);
         header.update(surfaceBlend(card, true));
+    }
+    private static void sizePaintLayer(View layer, View card) {
+        if (layer.getWidth() != card.getWidth() || layer.getHeight() != card.getHeight())
+            layer.measure(View.MeasureSpec.makeMeasureSpec(card.getWidth(), View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(card.getHeight(), View.MeasureSpec.EXACTLY));
+        // A layout-only pass can apply the SDK root's content padding without
+        // changing our prepared size. These paint planes belong at the card's
+        // origin, including while its recorded display list is being reused.
+        if (layer.getLeft() != 0 || layer.getTop() != 0
+                || layer.getRight() != card.getWidth() || layer.getBottom() != card.getHeight())
+            layer.layout(0, 0, card.getWidth(), card.getHeight());
     }
     private void removeHeader(View card) {
         var reference = headers.remove(card);
@@ -850,6 +865,13 @@ final class NativeCameraCard {
             describeTree(body, result, 0, new int[]{60});
         }
         return result.toString();
+    }
+    String describeInstantFrame(View view) {
+        var reference = materialSurfaces.get(view);
+        var surface = reference == null ? null : reference.get();
+        return "size=" + view.getWidth() + "x" + view.getHeight() + " scale=" + view.getScaleY()
+                + " alpha=" + view.getAlpha() + " mask=" + activeMorphMask(view)
+                + " material=" + (surface == null ? "null" : surface.describe());
     }
     private static void describeTree(View view, StringBuilder result, int depth, int[] remaining) {
         if (view == null || depth > 6 || remaining[0]-- <= 0) return;

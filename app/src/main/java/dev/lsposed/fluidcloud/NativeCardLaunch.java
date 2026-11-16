@@ -4,6 +4,7 @@ import android.app.PendingIntent;
 import android.content.Intent;
 import android.os.Bundle;
 import android.view.View;
+import android.view.ViewGroup;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
@@ -33,6 +34,18 @@ final class NativeCardLaunch {
                     || name.equals("com.oplus.systemui.plugins.seedling.card.ui.view.InstantContainer"))return true;
         }
         return false;
+    }
+    static View animationSource(View view,View capsuleHost){
+        if(view==null)return null;
+        if(cardContent(view))return view.getRootView();
+        // CapsuleLaunchAnimatorController.e() returns the pressed capsule itself,
+        // whereas the card controller returns its window root. Preserve that exact
+        // identity when matching the native ready callback; a shared status-bar root
+        // must not make unrelated views eligible for the shade launch bridge.
+        if(capsuleHost==null || !(view instanceof ViewGroup))return null;
+        for(View current=view;current!=null;current=current.getParent() instanceof View parent?parent:null)
+            if(current==capsuleHost)return view;
+        return null;
     }
     static Object[] snapshot(Object[] args){
         Object[] result=args.clone();

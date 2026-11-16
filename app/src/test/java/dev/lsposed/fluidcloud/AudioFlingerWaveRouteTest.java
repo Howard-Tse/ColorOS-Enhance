@@ -4,6 +4,15 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class AudioFlingerWaveRouteTest {
+    @Test public void captureRateBelongsToTheVerifiedOutputNotTheResampledTrackOrAnotherThread(){
+        String rateHeader=HEADER.replace("  1 Tracks", " Sample rate: 48000 Hz\n  1 Tracks");
+        assertEquals(48000,AudioFlingerWaveRoute.assess(rateHeader+ROW,10352,3673).samplingRateHz());
+        assertEquals(0,AudioFlingerWaveRoute.assess(HEADER+ROW,10352,3673).samplingRateHz());
+        assertEquals(0,AudioFlingerWaveRoute.assess(rateHeader.replace("48000","invalid")+ROW,10352,3673).samplingRateHz());
+        assertEquals(0,AudioFlingerWaveRoute.assess(rateHeader.replace("MIXER","OFFLOAD")+ROW,10352,3673).samplingRateHz());
+        String other=rateHeader.replace("48000","96000").replace("AudioOut_15","AudioOut_20");
+        assertEquals(48000,AudioFlingerWaveRoute.assess(other+ROW.replace("3673","3674")+rateHeader+ROW,10352,3673).samplingRateHz());
+    }
     private static final String STREAM=" AudioStreamOut: 0x456 flags 0x8 (AUDIO_OUTPUT_FLAG_DEEP_BUFFER)\n";
     private static final String HEADER="Output thread 0x123, name AudioOut_15, tid 10, type 0 (MIXER):\n"+STREAM+"  1 Tracks of which 1 are active\n"
             +" Type Id Active Client(pid/uid) Session Port Id S Flags Format Chn mask SRate ST Usg CT G db L dB R dB VS dB PortVol dB PortMuted Server FrmCnt FrmRdy F Underruns Flushed BitPerfect InternalMute Latency\n";

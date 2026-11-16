@@ -12,6 +12,7 @@ final class CameraMaterialSurface extends View {
     private List<Paint> paints = List.of();
     private final Runnable changed = this::invalidate;
     private Object outlineFrame;
+    private final android.graphics.Rect materialBounds = new android.graphics.Rect();
     CameraMaterialSurface(Context context, View owner) {
         super(context);
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
@@ -34,15 +35,26 @@ final class CameraMaterialSurface extends View {
         if (!paints.equals(next)) { paints = List.copyOf(next); invalidate(); }
     }
     void release() { update(List.of()); }
-    void updateOutline(Object frame) {
+    String describe() {
+        StringBuilder result = new StringBuilder();
+        for (Paint paint : paints) result.append('[').append(paint.drawable().nativeDrawable.getClass().getName())
+                .append(" a=").append(paint.alpha()).append('/').append(paint.drawable().getAlpha())
+                .append(" bounds=").append(paint.drawable().nativeDrawable.getBounds()).append(']');
+        return result.toString();
+    }
+    void updateOutline(Object frame, android.graphics.Rect bounds) {
+        boolean resized = !materialBounds.equals(bounds);
+        if (resized) materialBounds.set(bounds);
         if (!java.util.Objects.equals(outlineFrame, frame)) { outlineFrame = frame; invalidateOutline(); }
+        if (resized) invalidate();
     }
     @Override protected void onDraw(Canvas canvas) {
         for (Paint paint : paints) {
             if (paint.alpha() <= 0) continue;
             int save = paint.alpha() < 1 ? canvas.saveLayerAlpha(0, 0, getWidth(), getHeight(),
                     Math.round(paint.alpha() * 255)) : canvas.save();
-            try { paint.drawable().drawMaterial(canvas, 0, 0, getWidth(), getHeight()); }
+            try { paint.drawable().drawMaterial(canvas, materialBounds.left, materialBounds.top,
+                    materialBounds.width(), materialBounds.height()); }
             finally { canvas.restoreToCount(save); }
         }
     }

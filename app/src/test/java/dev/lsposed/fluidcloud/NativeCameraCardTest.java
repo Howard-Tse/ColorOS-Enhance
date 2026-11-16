@@ -353,6 +353,89 @@ public class NativeCameraCardTest {
             instant.restore();cards.restore();
         }
     }
+    @Test public void instantAppearSceneCapturesThePaddedHeightBeforeBuildingItsSizeAnimation() throws Exception {
+        var context=Robolectric.buildActivity(Activity.class).setup().get();
+        var root=new Root(context);root.h.set(460,25,540,115);
+        var container=new Instant(context);root.addView(container,new FrameLayout.LayoutParams(1000,2400));
+        var view=new FrameLayout(context);view.setPadding(3,7,4,8);
+        view.addView(new View(context),new FrameLayout.LayoutParams(100,350));
+        var params=new FrameLayout.LayoutParams(1000,-2);params.topMargin=200;
+        container.addView(view,params);container.current=view;container.expanded=true;
+        container.measure(View.MeasureSpec.makeMeasureSpec(1000,View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(2400,View.MeasureSpec.EXACTLY));
+        container.layout(0,0,1000,2400);
+        assertEquals(365,view.getMeasuredHeight());
+        var cards=new NativeCameraCard(lookup(false),(c,y)->new NativeCameraCard.Plan(25,Math.round(y-25)));
+        var instant=new NativeInstantCameraCard(lookup(false),cards);
+        instant.afterStateChange(container,true);
+        assertEquals("A requested layout still exposes the old native animation target",365,view.getMeasuredHeight());
+        instant.beforeAppearScene(container,true);
+        assertEquals(540,view.getMeasuredHeight());assertEquals(540,view.getHeight());
+        assertEquals(25,view.getTop());assertEquals(182,view.getChildAt(0).getTop());
+        assertEquals(207,view.getTop()+view.getChildAt(0).getTop());
+        for(int i=0;i<5;i++)instant.beforeAppearScene(container,true);
+        assertEquals(540,view.getMeasuredHeight());assertEquals(182,view.getPaddingTop());
+        instant.restore();cards.restore();
+    }
+    @Test public void instantAppearPreparationLeavesNativeOrUnreadyRootsUnmeasured() throws Exception {
+        var context=Robolectric.buildActivity(Activity.class).setup().get();
+        var root=new Root(context);root.h.set(460,25,540,115);
+        var container=new Instant(context);root.addView(container);
+        var view=new FrameLayout(context);view.addView(new View(context),new FrameLayout.LayoutParams(100,350));
+        var params=new FrameLayout.LayoutParams(1000,-2);params.topMargin=200;
+        container.addView(view,params);container.current=view;container.expanded=true;
+        var cards=new NativeCameraCard(lookup(false),(c,y)->new NativeCameraCard.Plan(25,Math.round(y-25)));
+        var instant=new NativeInstantCameraCard(lookup(false),cards);
+        instant.beforeAppearScene(container,false);
+        assertEquals(0,view.getMeasuredHeight());assertEquals(0,view.getPaddingTop());assertFalse(instant.owns(view));
+        container.expanded=false;instant.beforeAppearScene(container,true);
+        assertEquals(0,view.getMeasuredHeight());assertFalse(instant.owns(view));
+        container.expanded=true;instant.beforeAppearScene(container,true);
+        assertEquals("An unattached, unsized native window must wait for its normal layout",0,view.getMeasuredHeight());
+        instant.restore();cards.restore();
+    }
+    @Test public void instantPaintLayersRecoverFromLayoutOnlyPaddingOffsetsWithoutMovingContent() throws Exception {
+        for(boolean old:new boolean[]{false,true}) {
+            var context=Robolectric.buildActivity(Activity.class).setup().get();
+            var root=new Root(context);root.h.set(460,25,540,115);
+            var container=new Instant(context);root.addView(container,new FrameLayout.LayoutParams(1000,2400));
+            var view=new FrameLayout(context);view.setPadding(3,7,4,8);
+            var body=new FrameLayout(context);body.setBackgroundColor(0xff345678);
+            body.addView(new View(context),new FrameLayout.LayoutParams(100,350));
+            view.addView(body,new FrameLayout.LayoutParams(-1,350));
+            var params=new FrameLayout.LayoutParams(1000,-2);params.topMargin=200;
+            container.addView(view,params);container.current=view;container.expanded=true;
+            container.measure(View.MeasureSpec.makeMeasureSpec(1000,View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(2400,View.MeasureSpec.EXACTLY));
+            container.layout(0,0,1000,2400);
+            var cards=new NativeCameraCard(lookup(old),(c,y)->new NativeCameraCard.Plan(25,Math.round(y-25)));
+            var instant=new NativeInstantCameraCard(lookup(old),cards);
+            instant.beforeAppearScene(container,true);
+            int layers=0;
+            for(int i=0;i<view.getChildCount();i++) {
+                View child=view.getChildAt(i);
+                if(child instanceof CameraMaterialSurface || child instanceof CameraHeaderSurface) {
+                    layers++;
+                    // FrameLayout can lay out a paint-only child at paddingTop
+                    // using its already prepared measured size, without a new measure.
+                    child.layout(3,182,3+view.getWidth(),182+view.getHeight());
+                }
+            }
+            assertEquals(2,layers);
+            // Native size/scale callbacks keep running without redispatching
+            // the parent. Repair in that frame, not at the next container draw.
+            cards.updateSurface(view,true);
+            for(int i=0;i<view.getChildCount();i++) {
+                View child=view.getChildAt(i);
+                if(child instanceof CameraMaterialSurface || child instanceof CameraHeaderSurface) {
+                    assertEquals(0,child.getLeft());assertEquals(0,child.getTop());
+                    assertEquals(view.getWidth(),child.getRight());assertEquals(view.getHeight(),child.getBottom());
+                }
+            }
+            assertEquals(182,body.getTop());assertEquals(350,body.getHeight());
+            instant.restore();cards.restore();
+        }
+    }
     @Test public void automaticInstantPositionRefreshDoesNotTouchDisabledSmallOrLandscapeCards() throws Exception {
         var context=Robolectric.buildActivity(Activity.class).setup().get();
         var root=new Root(context);root.h.set(460,25,540,115);var container=new Instant(context);root.addView(container);

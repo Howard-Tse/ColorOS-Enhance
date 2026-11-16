@@ -13,6 +13,30 @@ import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class) @Config(sdk=36,manifest=Config.NONE)
 public class NativeCardLaunchTest {
+    @Test public void capsuleLaunchMatchesThePressedGroupInsteadOfTheWholeStatusBarWindow(){
+        var context=org.robolectric.RuntimeEnvironment.getApplication();
+        var window=new android.widget.FrameLayout(context);var host=new android.widget.FrameLayout(context);
+        var capsule=new android.widget.FrameLayout(context);window.addView(host);host.addView(capsule);
+        assertSame(capsule,NativeCardLaunch.animationSource(capsule,host));
+        assertNotSame(window,NativeCardLaunch.animationSource(capsule,host));
+        var leaf=new View(context);capsule.addView(leaf);assertNull(NativeCardLaunch.animationSource(leaf,host));
+    }
+    @Test public void viewsOutsideTheCurrentCapsuleHostCannotJoinItsLaunch(){
+        var context=org.robolectric.RuntimeEnvironment.getApplication();var window=new android.widget.FrameLayout(context);
+        var host=new android.widget.FrameLayout(context);var other=new android.widget.FrameLayout(context);
+        window.addView(host);window.addView(other);
+        assertNull(NativeCardLaunch.animationSource(other,host));assertNull(NativeCardLaunch.animationSource(window,host));
+        assertNull(NativeCardLaunch.animationSource(null,host));assertNull(NativeCardLaunch.animationSource(host,null));
+        var capsule=new android.widget.FrameLayout(context);host.addView(capsule);host.removeView(capsule);
+        assertNull(NativeCardLaunch.animationSource(capsule,host));
+    }
+    @Test public void cardContentKeepsItsExistingWindowRootContract(){
+        var context=org.robolectric.RuntimeEnvironment.getApplication();var window=new android.widget.FrameLayout(context);
+        var card=new com.oplus.systemui.plugins.seedling.card.ui.view.CardView(context);var child=new View(context);
+        window.addView(card);card.addView(child);
+        assertSame(window,NativeCardLaunch.animationSource(child,null));
+        assertSame(window,NativeCardLaunch.animationSource(card,null));
+    }
     @Test public void discoversTheSharedNativeLaunchContractWithoutAnObfuscatedMethodName(){
         assertEquals("launch",NativeCardLaunch.find(Current.class).orElseThrow().getName());
         assertEquals("a",NativeCardLaunch.find(Older.class).orElseThrow().getName());

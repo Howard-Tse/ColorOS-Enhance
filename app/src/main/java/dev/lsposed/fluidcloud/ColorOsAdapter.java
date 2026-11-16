@@ -274,11 +274,14 @@ final class ColorOsAdapter {
                 Method method=launch.get();
                 pluginHooks.add(module.hook(method).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain->{
                     Object[] nativeArguments=chain.getArgs().toArray();
-                    if(retainShade() && shadeActive() && NativeCardLaunch.cardContent((View)chain.getArg(1)) && NativeCardLaunch.activityRequest(nativeArguments)){
+                    View launchSource=null;
+                    if(retainShade() && shadeActive() && NativeCardLaunch.activityRequest(nativeArguments))
+                        launchSource=NativeCardLaunch.animationSource((View)chain.getArg(1),host);
+                    if(launchSource!=null){
                         if(shadeLaunch!=null){
                             if(shadeLaunch.busy())return true;
                             boolean began=false;
-                            try{began=shadeLaunch.begin(((View)chain.getArg(1)).getRootView(),scope.shade(),()->session==this && allowed() && retainShade());}
+                            try{began=shadeLaunch.begin(launchSource,scope.shade(),()->session==this && allowed() && retainShade());}
                             catch(RuntimeException|LinkageError error){shadeLaunch.cancel();module.error("Shade launch preparation unavailable",error);}
                             if(began){
                                 try{Object result=chain.proceed();if(!Boolean.TRUE.equals(result))shadeLaunch.launchFailed();return result;}

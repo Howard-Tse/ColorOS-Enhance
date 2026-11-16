@@ -14,6 +14,8 @@ final class MediaWaveCapture {
     }
     interface Source extends AutoCloseable {
         MediaWaveLevels read() throws Exception;
+        /** No new audible-time frame yet; keep the last presentation, not a zero sample. */
+        default boolean buffering(){return false;}
         @Override void close();
     }
     enum Route { SAFE, WAIT, UNSAFE }
@@ -37,6 +39,7 @@ final class MediaWaveCapture {
     private Request budgetKey;
     private int retries;
     private long healthySince=-1;
+    private long bufferingSince=-1;
     private Source source;
     private long sourceTicket;
     private long fallbackTicket;
@@ -96,6 +99,12 @@ final class MediaWaveCapture {
             if(levels==null)throw new IllegalStateException("No measurement");
             if(ticket!=generation){stop();return;}
             long now=worker.now();
+            if(source.buffering()){
+                if(bufferingSince<0)bufferingSince=now;
+                if(now-bufferingSince>3500)throw new IllegalStateException("Capture timeline did not settle");
+                pending=()->sample(ticket);worker.post(pending,intervalMs);return;
+            }
+            bufferingSince=-1;
             if(healthySince<0)healthySince=now;
             else if(now-healthySince>=60000){retries=0;healthySince=now;}
             // A later genuine failure must restore OEM again after custom output
@@ -117,6 +126,7 @@ final class MediaWaveCapture {
     }
     private void stop(){
         healthySince=-1;
+        bufferingSince=-1;
         if(pending!=null){worker.remove(pending);pending=null;}
         Source previous=source;source=null;
         if(previous!=null)try{previous.close();}catch(RuntimeException|LinkageError ignored){/* Already failing closed. */}

@@ -17,6 +17,8 @@ final class AndroidMediaWaveBackend implements MediaWaveCapture.Backend {
     private final java.util.function.Supplier<MediaWaveOptions> options;
     private final java.util.function.Consumer<String> diagnostic;
     private MediaWaveCapture.Request diagnosticRequest;
+    private MediaWaveCapture.Request pcmRequest;
+    private int pcmRate;
     private int requestNumber,checkNumber;
     AndroidMediaWaveBackend()throws ReflectiveOperationException{
         this(()->MediaWaveOptions.DEFAULTS);
@@ -39,8 +41,10 @@ final class AndroidMediaWaveBackend implements MediaWaveCapture.Backend {
         // No effect is created until the actual track and output thread have passed this check.
         if(!request.equals(diagnosticRequest)){diagnosticRequest=request;requestNumber++;checkNumber=0;}
         checkNumber++;
+        pcmRequest=null;pcmRate=0;
         try{
             var assessment=AudioFlingerWaveRoute.assess(snapshot(),request.uid(),request.session());
+            if(assessment.route()==MediaWaveCapture.Route.SAFE){pcmRequest=request;pcmRate=assessment.samplingRateHz();}
             diagnostic.accept("Media wave route check: request="+requestNumber+" check="+checkNumber+" "+assessment.route()+" "+assessment.reason());
             return assessment.route();
         }
@@ -68,6 +72,19 @@ final class AndroidMediaWaveBackend implements MediaWaveCapture.Backend {
         }
     }
     @Override public MediaWaveCapture.Source open(MediaWaveCapture.Request request)throws MediaWaveCapture.NotReady{
+        // The allow-listed private PCM route has already been checked by the worker.
+        // Newer AIDL engines expose their visual-only latency and can avoid their
+        // broken wrapped capture window. Unsupported older engines keep the API path.
+        try {
+            MediaWaveCapture.Source fresh = request.equals(pcmRequest) && pcmRate > 0
+                    ? AndroidMediaWavePcm.open(request.session(), pcmRate, options, diagnostic) : null;
+            if (fresh != null) return fresh;
+        } catch (MediaWaveCapture.NotReady waiting) {
+            throw waiting;
+        } catch (Exception | LinkageError unavailable) {
+            diagnostic.accept("Media wave capture: platform Visualizer API (fresh PCM capability unavailable: "
+                    + unavailable.getClass().getSimpleName() + ")");
+        }
         Visualizer visualizer;
         try{visualizer=new Visualizer(request.session());} // never session 0
         catch(RuntimeException error){
@@ -101,7 +118,11 @@ final class AndroidMediaWaveBackend implements MediaWaveCapture.Backend {
                 private MediaWaveSpectrum spectrum;
                 private MediaWaveSpectrum previousSpectrum;
                 private int traceReads;
+                private MediaWaveInputTrace inputTrace;
+                private byte[] traceWaveform;
                 public MediaWaveLevels read()throws MediaWaveCapture.NotReady{
+                    boolean tracing=diagnostic!=null && Log.isLoggable("COSMediaWave",Log.DEBUG);
+                    long began=tracing?SystemClock.uptimeMillis():0;
                     // Native Visualizer can report SUCCESS with a zero buffer while
                     // disabled. That is not a measured silent frequency spectrum.
                     int actual;
@@ -124,6 +145,14 @@ final class AndroidMediaWaveBackend implements MediaWaveCapture.Backend {
                     }catch(IllegalStateException state){throw new MediaWaveCapture.NotReady(state);}
                     int sensitivity = currentOptions.sensitivityPercent();
                     MediaWaveLevels levels = spectrum.read(samples, sensitivity);
+                    if(tracing){
+                        if(inputTrace==null)inputTrace=new MediaWaveInputTrace(diagnostic);
+                        if(traceWaveform==null)traceWaveform=new byte[size];
+                        byte[] observed=null;
+                        try{if(visualizer.getWaveForm(traceWaveform)==Visualizer.SUCCESS)observed=traceWaveform;}
+                        catch(RuntimeException ignored){/* Diagnostics cannot fail a valid FFT capture. */}
+                        long now=SystemClock.uptimeMillis();inputTrace.read(now,now-began,samples,observed,levels,currentOptions);
+                    }else{inputTrace=null;traceWaveform=null;}
                     if (traceReads > 0 && (--traceReads == 0 || !levels.equals(MediaWaveLevels.SILENT))) {
                         // Compare the same real FFT under both mappings. Only normalized bar
                         // heights are logged, once per mapping change when diagnostics are enabled.

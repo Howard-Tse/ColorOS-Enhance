@@ -21,6 +21,7 @@ final class NativeInstantCameraCard {
     private final TouchWriter touchWriter;
     private final WeakHashMap<ViewGroup, Region> writtenRegions = new WeakHashMap<>();
     private final WeakHashMap<ViewGroup, android.view.ViewTreeObserver.OnPreDrawListener> touchChecks = new WeakHashMap<>();
+    private boolean preparingScene;
     private record Owned(java.lang.ref.WeakReference<ViewGroup> container, int nativeTop, int appliedTop,
                          int nativePadding, int appliedPadding, int inset, Rect camera) { }
     NativeInstantCameraCard(NativeCameraCard.Lookup lookup, NativeCameraCard cards) throws ReflectiveOperationException {
@@ -80,6 +81,23 @@ final class NativeInstantCameraCard {
                 Reflect.call(position, container);
         }
         update(container, enabled);
+    }
+    void beforeAppearScene(ViewGroup container, boolean enabled) {
+        if (!enabled || preparingScene) return;
+        preparingScene = true;
+        try {
+            afterStateChange(container, true);
+            View value = (View) Reflect.call(current, container);
+            // The new instant-appear builder snapshots measured height into its
+            // SizeFragment. A requested layout alone arrives too late: it leaves
+            // that whole animation cropping to the old unpadded height.
+            if (!owned.containsKey(value) || !value.isLayoutRequested()
+                    || container.getWidth() <= 0 || container.getHeight() <= 0) return;
+            container.measure(View.MeasureSpec.makeMeasureSpec(container.getWidth(), View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(container.getHeight(), View.MeasureSpec.EXACTLY));
+            container.layout(container.getLeft(), container.getTop(), container.getRight(), container.getBottom());
+            update(container, true);
+        } finally { preparingScene = false; }
     }
     void update(ViewGroup container, boolean enabled) {
         containers.put(container, enabled);

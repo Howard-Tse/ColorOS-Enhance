@@ -6,7 +6,10 @@ import java.util.regex.Pattern;
 
 /** Positive allow-list of a live ordinary mixer track, never a capability guess. */
 final class AudioFlingerWaveRoute {
-    record Assessment(MediaWaveCapture.Route route,String reason) { }
+    record Assessment(MediaWaveCapture.Route route,String reason,int samplingRateHz) {
+        Assessment(MediaWaveCapture.Route route,String reason){this(route,reason,0);}
+    }
+    private static final Pattern RATE=Pattern.compile("^Sample rate: (\\d+) Hz$");
     private static final Pattern OUTPUT=Pattern.compile("^Output thread .*type \\d+ \\(([A-Z_]+)\\):\\s*$");
     private static final Pattern STREAM=Pattern.compile("^AudioStreamOut:\\s+(\\S+)\\s+flags\\s+(0[xX][\\da-fA-F]+|0)\\s*(?:\\([^\\r\\n]*\\))?\\s*$");
     private static final Pattern TRACK=Pattern.compile("^\\s*(?:(F\\d+)\\s+)?(?:([A-Za-z?]+)\\s+)?\\d+\\s+(yes|no)\\s+(\\d+)\\s*/\\s*(\\d+)\\s+(\\d+)(?:\\s+(.*))?$");
@@ -18,7 +21,7 @@ final class AudioFlingerWaveRoute {
     private static final long KNOWN_CBLK_FLAGS=0x7ef;
     private static final long HARMLESS_CBLK_FLAGS=0x1|0x2|0x20; // UNDERRUN, FORCEREADY, LOOP_CYCLE
     private static final class Output {
-        final String type;long flags;int streams;boolean invalid;
+        final String type;long flags;int streams,rate,rateFields;boolean invalid;
         Output(String type){this.type=type;}
         void stream(String line){
             streams++;
@@ -44,6 +47,12 @@ final class AudioFlingerWaveRoute {
             if(output.matches()){current=new Output(output.group(1));tracks=false;continue;}
             if(trimmed.startsWith("Output thread") || trimmed.startsWith("Input thread") || trimmed.startsWith("Record thread")){current=null;tracks=false;}
             if(current==null)continue;
+            Matcher rate=RATE.matcher(trimmed);
+            if(rate.matches() && !tracks){
+                current.rateFields++;
+                try{current.rate=Integer.parseInt(rate.group(1));}catch(NumberFormatException invalid){current.rate=0;}
+                continue;
+            }
             if(trimmed.startsWith("AudioStreamOut:")){current.stream(trimmed);continue;}
             if(trimmed.matches("\\d+ Tracks(?: of which \\d+ are active)?")){tracks=true;continue;}
             if(trimmed.contains("Effect Chains") || trimmed.equals("Local log:") || trimmed.startsWith("Local log:"))tracks=false;
@@ -89,7 +98,8 @@ final class AudioFlingerWaveRoute {
             if(!perfect.matches())return new Assessment(MediaWaveCapture.Route.WAIT,"track columns not ready");
             if(!perfect.group(1).equals("false"))return new Assessment(MediaWaveCapture.Route.UNSAFE,"bit-perfect track");
             if(!(detail.group(1).equals("A") || detail.group(1).equals("r")))return new Assessment(MediaWaveCapture.Route.WAIT,"track state not ready");
-            return new Assessment(MediaWaveCapture.Route.SAFE,"ordinary PCM mixer output=0x"+Long.toHexString(output.flags)+" cblk=0x"+Long.toHexString(cblk));
+            int rate=output.rateFields==1 && output.rate>=32000 && output.rate<=192000?output.rate:0;
+            return new Assessment(MediaWaveCapture.Route.SAFE,"ordinary PCM mixer output=0x"+Long.toHexString(output.flags)+" cblk=0x"+Long.toHexString(cblk),rate);
         }catch(NumberFormatException invalid){return new Assessment(MediaWaveCapture.Route.WAIT,"track values not ready");}
     }
 }
