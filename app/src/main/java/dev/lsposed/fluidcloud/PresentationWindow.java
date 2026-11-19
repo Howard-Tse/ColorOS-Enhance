@@ -7,6 +7,7 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Region;
 import android.view.Gravity;
@@ -33,7 +34,12 @@ final class PresentationWindow {
     private final WindowManager.LayoutParams params;
     private final SurfaceView view;
     private final Region rawTouch = new Region(), touch = new Region();
+    private final Region previousTouch = new Region(), touchMask = new Region(), viewport = new Region();
+    private final Region maskedSource = new Region();
     private final Path touchClip=new Path();
+    private final Path touchBoundary=new Path();
+    private final Rect sourceBounds = new Rect();
+    private final RectF capsuleBounds = new RectF();
     private final Supplier<RectF> camera;
     private final BooleanSupplier allowed;
     private final Predicate<CloudPresentationCoordinator.Ticket> accepts;
@@ -53,6 +59,11 @@ final class PresentationWindow {
     private Runnable ready;
     private CloudPresentationCoordinator.Frame frame;
     private CapsulePresentationGeometry.Geometry geometry;
+    private CapsulePresentationGeometry.Geometry steadyGeometry;
+    private CapsulePresentationGeometry.Geometry maskedGeometry;
+    private CloudCorners.Style maskedCorners;
+    private int maskedWidth, maskedHeight;
+    private float maskedDensity;
     FrameSync frameSync = new NativeFrameSync();
     Runnable prepareContent = () -> { };
     Supplier<CloudCorners.Style> corners = () -> CloudCorners.Style.OEM;
@@ -115,6 +126,12 @@ final class PresentationWindow {
             && (target==source.host || suppressShade && (target==shade || target instanceof View child
                 && child.getParent()==shade && child.getClass().getSimpleName().equals("FakePluginFrame")));}
     void sourceChanged(boolean layout){dirty|=layout;if(layout)source.structureChanged();if(!disposed)pixels.run();}
+    void repaintPixels(){
+        if(!contentVisible())return;
+        // A waveform update changes only the bars. Real source layout and pose
+        // changes still go through the coordinator and rebuild the touch region.
+        view.postInvalidateOnAnimation();
+    }
     void prepare(){
         if(disposed || !allowed.getAsBoolean())return;
         busy++;
@@ -123,7 +140,6 @@ final class PresentationWindow {
             int height=source.viewportHeight(view,Math.max(view.getResources().getDisplayMetrics().heightPixels,source.host.getRootView().getHeight()));
             if(height>0 && params.height!=height){params.height=height;manager.updateViewLayout(view,params);}
             source.refresh(view,rawTouch);
-            updateGeometry();
         }finally{busy--;}
     }
     void render(CloudPresentationCoordinator.Frame next){
@@ -131,18 +147,40 @@ final class PresentationWindow {
         frame=next;updateGeometry();view.invalidate();
     }
     private void updateGeometry(){
-        Region previous=new Region(touch);touch.setEmpty();
-        geometry=frame==null?null:frame.pose()==null
-                ?CapsulePresentationGeometry.resolve(new RectF(source.touchBounds()),camera.get(),frame.fraction())
-                :CapsulePresentationGeometry.resolve(new RectF(source.touchBounds()),source.profile(view,camera.get()),frame.pose());
+        geometry=resolveGeometry();
         if(rendered==CloudPresentationCoordinator.Owner.MODULE && geometry!=null && frame!=null && accepts.test(frame.ticket())){
-            Path area=rawTouch.getBoundaryPath();area.transform(geometry.forward());
-            RectF bounds=geometry.bounds();CloudCorners.Style style=corners.get();
+            CloudCorners.Style style=corners.get();
+            int width=view.getWidth(),height=view.getHeight();
+            float density=view.getResources().getDisplayMetrics().density;
+            if(geometry==maskedGeometry && width==maskedWidth && height==maskedHeight && density==maskedDensity
+                    && style.equals(maskedCorners) && rawTouch.equals(maskedSource))return;
+            previousTouch.set(touch);
+            touchBoundary.rewind();rawTouch.getBoundaryPath(touchBoundary);touchBoundary.transform(geometry.forward());
+            RectF bounds=geometry.bounds();
             CloudCorners.path(touchClip,bounds,cornerRadius(bounds,style),style.continuous());
-            Region clip=new Region();clip.setPath(touchClip,new Region(0,0,view.getWidth(),view.getHeight()));
-            touch.setPath(area,clip);
+            viewport.set(0,0,width,height);touchMask.setPath(touchClip,viewport);
+            touch.setPath(touchBoundary,touchMask);
+            maskedGeometry=geometry;maskedCorners=style;maskedWidth=width;maskedHeight=height;maskedDensity=density;
+            maskedSource.set(rawTouch);
+        }else{
+            maskedGeometry=null;
+            if(touch.isEmpty())return;
+            previousTouch.set(touch);touch.setEmpty();
         }
-        if(!previous.equals(touch)){view.invalidate();var surface=view.getRootSurfaceControl();if(surface!=null)surface.setTouchableRegion(new Region(touch));}
+        if(!previousTouch.equals(touch)){view.invalidate();var surface=view.getRootSurfaceControl();if(surface!=null)surface.setTouchableRegion(new Region(touch));}
+    }
+    private CapsulePresentationGeometry.Geometry resolveGeometry(){
+        if(frame==null || CapsuleMotion.HIDDEN.equals(frame.pose()) || !rawTouch.getBounds(sourceBounds))return null;
+        capsuleBounds.set(sourceBounds);
+        if(CapsuleMotion.FULL.equals(frame.pose())){
+            // A settled capsule keeps its source bounds; only a morph needs the native camera anchor.
+            if(steadyGeometry==null || !steadyGeometry.bounds().equals(capsuleBounds))
+                steadyGeometry=CapsulePresentationGeometry.steady(capsuleBounds);
+            return steadyGeometry;
+        }
+        RectF anchor=camera.get();
+        return frame.pose()==null?CapsulePresentationGeometry.resolve(capsuleBounds,anchor,frame.fraction())
+                :CapsulePresentationGeometry.resolve(capsuleBounds,source.profile(view,anchor),frame.pose());
     }
     private float cornerRadius(RectF bounds,CloudCorners.Style style) {
         float max=Math.min(bounds.width(),bounds.height())/2f;
@@ -197,7 +235,7 @@ final class PresentationWindow {
     void release(){
         if(disposed)return;
         transferEpoch++;pending=false;ready=null;rendered=desired=CloudPresentationCoordinator.Owner.NATIVE;
-        frame=null;geometry=null;touch.setEmpty();rawTouch.setEmpty();
+        frame=null;geometry=null;maskedGeometry=null;touch.setEmpty();rawTouch.setEmpty();
         Throwable error=null;
         try{source.cancelTouch();}catch(RuntimeException|LinkageError failure){error=failure;}
         try{source.clearMorph();}catch(RuntimeException|LinkageError failure){error=combine(error,failure);}

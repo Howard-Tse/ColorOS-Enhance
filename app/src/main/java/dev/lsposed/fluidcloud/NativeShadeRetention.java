@@ -15,9 +15,11 @@ final class NativeShadeRetention {
         if(original==null)return null;
         if(!retain){nativeInputs.remove(handler);return original;}
         nativeInputs.put(handler,new Bundle(original));
+        if(Float.compare(original.getFloat("expandFraction",Float.NaN),0f)==0)return original;
         Bundle copy=new Bundle(original);copy.putFloat("expandFraction",0f);return copy;
     }
     void restore(){
+        if(nativeInputs.isEmpty())return;
         Map<Object,Bundle> pending=new LinkedHashMap<>(nativeInputs);nativeInputs.clear();
         for(var entry:pending.entrySet())Reflect.call(panel,entry.getKey(),entry.getValue());
     }

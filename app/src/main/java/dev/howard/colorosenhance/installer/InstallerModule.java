@@ -1,5 +1,8 @@
 package dev.howard.colorosenhance.installer;
 
+import dev.howard.colorosenhance.diagnostics.DiagnosticPoint;
+import dev.howard.colorosenhance.diagnostics.DiagnosticReporter;
+
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ResolveInfo;
@@ -70,8 +73,9 @@ public final class InstallerModule extends XposedModule {
                 return scope.within(chain.getThisObject(),chain::proceed);
             });
             installConfirmationHook(loader,launchScope);
+            DiagnosticReporter.report(DiagnosticPoint.INSTALLER, DiagnosticPoint.State.INSTALLED);
             log(Log.INFO,"ColorOSEnhance","Installer routing hook loaded (default off; configuration controls routing)");
-        } catch (Throwable failure) { configuration=new Configuration(false,false,""); warn("initialization",failure); }
+        } catch (Throwable failure) { DiagnosticReporter.report(DiagnosticPoint.INSTALLER, DiagnosticPoint.State.UNSUPPORTED); configuration=new Configuration(false,false,""); warn("initialization",failure); }
     }
     private void installConfirmationHook(ClassLoader loader,InstallerLaunchScope scope) {
         try {
@@ -101,8 +105,9 @@ public final class InstallerModule extends XposedModule {
                 Configuration config=configuration;
                 return config.enabled() && config.skip() ? scope.within(chain::proceed) : chain.proceed();
             });
+            DiagnosticReporter.report(DiagnosticPoint.INSTALLER_CONFIRM, DiagnosticPoint.State.INSTALLED);
             log(Log.INFO,"ColorOSEnhance","Installer confirmation hook loaded (request-scoped)");
-        } catch(Throwable failure) {warn("confirmation initialization",failure);}
+        } catch(Throwable failure) {DiagnosticReporter.report(DiagnosticPoint.INSTALLER_CONFIRM, DiagnosticPoint.State.UNSUPPORTED);warn("confirmation initialization",failure);}
     }
     private void reload() {
         try {

@@ -1,5 +1,8 @@
 package com.howard.simpinautounlock.hook;
 
+import dev.howard.colorosenhance.diagnostics.DiagnosticPoint;
+import dev.howard.colorosenhance.diagnostics.DiagnosticReporter;
+
 import android.app.Application;
 import android.content.SharedPreferences;
 import com.howard.simpinautounlock.core.SimFeatureSettings;
@@ -47,14 +50,17 @@ public final class ModuleMain extends XposedModule {
         }
         Application application = ReflectionAccess.currentApplication();
         if (application == null) {
+            DiagnosticReporter.report(DiagnosticPoint.SIM, DiagnosticPoint.State.WAITING);
             SafeLog.failure("PHONE_CONTEXT_UNAVAILABLE");
             return;
         }
         try {
             SafeLog.runtimeBoundary(PinStorageTraceEvent.PHONE_RUNTIME_INIT_EARLY);
             PhoneRuntime.initialize(application, param.getClassLoader(), pendingPinSource);
+            DiagnosticReporter.report(DiagnosticPoint.SIM, DiagnosticPoint.State.READY);
             SafeLog.runtimeBoundary(PinStorageTraceEvent.PHONE_RUNTIME_READY_EARLY);
         } catch (Throwable error) {
+            DiagnosticReporter.report(DiagnosticPoint.SIM, DiagnosticPoint.State.FAILED);
             SafeLog.failure("PHONE_RUNTIME_INIT_FAILED");
         }
     }

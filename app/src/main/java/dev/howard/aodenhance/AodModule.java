@@ -1,6 +1,8 @@
 package dev.howard.aodenhance;
 
 import dev.howard.colorosenhance.BuildConfig;
+import dev.howard.colorosenhance.diagnostics.DiagnosticPoint;
+import dev.howard.colorosenhance.diagnostics.DiagnosticReporter;
 
 import android.content.SharedPreferences;
 import android.util.Log;
@@ -34,7 +36,8 @@ public final class AodModule extends XposedModule {
             preferences.registerOnSharedPreferenceChangeListener(preferenceListener);
             reload();
             new FirmwareHooks(this, param.getClassLoader(), views).install();
-        } catch (Throwable error) { warnOnce("初始化失败；未加载的功能保持系统行为", error); }
+            DiagnosticReporter.report(DiagnosticPoint.AOD, warned.isEmpty() ? DiagnosticPoint.State.INSTALLED : DiagnosticPoint.State.PARTIAL);
+        } catch (Throwable error) { DiagnosticReporter.report(DiagnosticPoint.AOD, DiagnosticPoint.State.UNSUPPORTED); warnOnce("初始化失败；未加载的功能保持系统行为", error); }
     }
     private void reload() {
         try { config = Config.from(preferences.getAll()); }

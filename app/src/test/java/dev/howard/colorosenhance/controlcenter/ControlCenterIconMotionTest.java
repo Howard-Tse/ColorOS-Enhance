@@ -95,4 +95,13 @@ public class ControlCenterIconMotionTest {
         root.setVisibility(View.INVISIBLE);motion.schedule();assertEquals(1,mirror.getAlpha(),0);
         root.scrollTo(0,0);root.setVisibility(View.VISIBLE);motion.fraction(.2f);motion.sync();assertEquals(1,mirror.getAlpha(),0);assertNull(mirror.getAnimationMatrix());motion.close();
     }
+    @Test public void preDrawStillTransfersAndRestoresOffscreenIconsAfterSkippingOrdinaryFrames(){
+        var root=new FrameLayout(context);var header=new View(context);var mirror=new View(context);root.addView(header);root.addView(mirror);
+        var motion=new ControlCenterIconMotion(root,header,mirror,1);
+        try {
+            motion.fraction(.8f);root.getViewTreeObserver().dispatchOnPreDraw();assertEquals(1,mirror.getAlpha(),0);
+            root.scrollTo(0,800);motion.fraction(.6f);root.getViewTreeObserver().dispatchOnPreDraw();assertEquals(0,mirror.getAlpha(),0);
+            root.scrollTo(0,0);motion.fraction(1);root.getViewTreeObserver().dispatchOnPreDraw();assertEquals(1,mirror.getAlpha(),0);
+        }finally{motion.close();}
+    }
 }

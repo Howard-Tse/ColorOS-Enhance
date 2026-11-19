@@ -5,6 +5,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
+import dev.howard.colorosenhance.diagnostics.DiagnosticPoint;
 import io.github.libxposed.api.XposedInterface;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -49,6 +50,8 @@ final class CloudExtras {
         for(int i=0;i<view.getChildCount();i++){
             View root=view.getChildAt(i);
             if(!root.getClass().getName().equals(NativeCapsuleAppearance.VIEWS+"CapsuleContainerRoot"))continue;
+            if (module.notificationCloud != null) try { module.notificationCloud.context(root, view.getContext()); }
+            catch (RuntimeException | LinkageError unavailable) { module.info("Notification source unavailable; capsule enhancements remain active"); }
             Session existing=null;
             for(Session session:sessions)if(session.loader==root.getClass().getClassLoader()){existing=session;break;}
             if(existing==null){existing=new Session(root);sessions.add(existing);}
@@ -66,6 +69,7 @@ final class CloudExtras {
         final ArrayList<XposedInterface.HookHandle> hooks=new ArrayList<>();
         NativeCapsuleAppearance appearance;
         NativeCapsuleSize size;
+        NativeCapsuleForeground foreground;
         NativeCardOrder order;
         NativeCardDim dim;
         NativeCardDismissal dismissal;
@@ -77,9 +81,20 @@ final class CloudExtras {
         boolean closing;
         Session(View root){
             this.root=root;loader=root.getClass().getClassLoader();NativeCapsuleAppearance.Lookup lookup=name->Reflect.type(loader,name);
+            try { NativeMediaShadeText.install(module, loader, hooks); }
+            catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+                module.report(DiagnosticPoint.MEDIA_SHADE_TEXT, DiagnosticPoint.State.UNSUPPORTED);
+            }
             if(module.mediaWaves!=null)try{
                 wave=module.mediaWaves.addPlugin(loader,root);root.getViewTreeObserver().addOnGlobalLayoutListener(waveLayout);
             }catch(ReflectiveOperationException|RuntimeException|LinkageError error){module.error("Native media waveform view unavailable; OEM animation retained",error);}
+            try {
+                foreground = new NativeCapsuleForeground(module, loader,
+                        () -> !closing && module.config.enabled() && module.keepCapsuleInForeground(), hooks);
+                module.info("Native capsule foreground control installed");
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+                module.error("Native capsule foreground control unavailable; system behavior retained", unavailable);
+            }
             int start=hooks.size();
             try{
                 appearance=new NativeCapsuleAppearance(lookup);
@@ -112,7 +127,9 @@ final class CloudExtras {
                 hooks.add(module.hook(size.measure).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain->{
                     Object result=chain.proceed();
                     safe(()->size.afterMeasure((View)chain.getThisObject(),(int)chain.getArg(0),
-                            closing?CapsuleSize.OEM:module.config.capsuleSize()));
+                            closing?CapsuleSize.OEM:module.config.capsuleSize(),
+                            module.notificationCloud == null ? Integer.MAX_VALUE
+                                    : module.notificationCloud.capsuleWidthLimit((View) chain.getThisObject())));
                     return result;
                 }));
                 module.info("Native capsule size controls installed");
@@ -212,6 +229,7 @@ final class CloudExtras {
             catch(ClassNotFoundException missing){lookup.load("a5.q");return true;}
         }
         void refresh(){
+            if(foreground!=null)safe(foreground::refresh);
             if(dismissal!=null)safe(dismissal::refresh);
             if(size!=null)for(View root:new ArrayList<>(roots))safe(()->size.refresh(root,closing?CapsuleSize.OEM:module.config.capsuleSize()));
             if(order!=null){safe(()->order.selection(root));order.schedule();}
@@ -227,6 +245,7 @@ final class CloudExtras {
                 if(ancestor==root){order.selection(view);return;}
         }
         void close(){closing=true;
+            if(foreground!=null)safe(foreground::refresh);
             if(dismissal!=null)dismissal.close();
             if(order!=null)order.close();if(size!=null)size.close();
             if(root.getViewTreeObserver().isAlive())root.getViewTreeObserver().removeOnGlobalLayoutListener(waveLayout);

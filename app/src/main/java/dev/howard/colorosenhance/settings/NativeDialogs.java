@@ -183,6 +183,20 @@ final class NativeDialogs {
             show("状态栏图标排序",null,editor,()->{String encoded=editor.encodedValue();clear();save.accept(encoded);});
         }catch(ReflectiveOperationException|RuntimeException failure){failed();}
     }
+    void notificationRules(dev.howard.colorosenhance.notifications.NotificationCloudRules value, Consumer<String> save) {
+        clear();
+        try {
+            Object builder = host.create("com.coui.appcompat.dialog.COUIAlertDialogBuilder", context);
+            Context themed = (Context) host.call(builder, "getContext");
+            var editor = new dev.howard.colorosenhance.notifications.NotificationAppPicker(themed, value);
+            String title = value.denylist() ? "选择黑名单应用" : "选择白名单应用";
+            show(title, null, editor, () -> saveNotificationRules(editor::encodedValue, save));
+        } catch (ReflectiveOperationException | RuntimeException failure) { failed(); }
+    }
+    private void saveNotificationRules(Supplier<String> encode, Consumer<String> save) {
+        try { String encoded = encode.get(); clear(); save.accept(encoded); }
+        catch (IllegalArgumentException tooMany) { error.accept("规则过多，请减少所选应用或渠道例外后重试"); }
+    }
     @android.annotation.SuppressLint("DiscouragedApi") // Use the host firmware's COUI palette and list style.
     private ListAdapter choiceAdapter(Context themed,CharSequence[] labels) {
         var resources=themed.getResources();

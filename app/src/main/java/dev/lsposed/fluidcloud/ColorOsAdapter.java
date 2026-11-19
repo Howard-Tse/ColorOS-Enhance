@@ -27,6 +27,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import io.github.libxposed.api.XposedInterface;
+import dev.howard.colorosenhance.diagnostics.DiagnosticPoint;
 
 /** Firmware/lifecycle bridge. The presentation coordinator alone selects visible output. */
 final class ColorOsAdapter {
@@ -86,6 +87,7 @@ final class ColorOsAdapter {
             if(connected!=null)after(connected,chain->{Object pending=pendingController;if(pending!=null && Reflect.get(managerField,pending)==chain.getThisObject())capture(pending);});
             for(Method setter:stateSetters)after(setter,chain->{Session current=session;if(current!=null && current.state==chain.getThisObject())current.shadeProgressChanged();});
             before(detach,chain->release(chain.getThisObject()));before(removed,chain->release(chain.getThisObject()));
+            installKeyguardHandoff();
             hooks.add(module.hook(handoff).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain->{
                 Session current=session;
                 if(current!=null && current.controller==chain.getThisObject() && current.window!=null)
@@ -94,6 +96,25 @@ final class ColorOsAdapter {
             }));
             module.info("Unified cloud presentation installed; native visibility is observation-only");
         }catch(RuntimeException|LinkageError error){uninstall();throw error;}
+    }
+    private void installKeyguardHandoff(){
+        try {
+            Class<?> type=Reflect.type(attach.getDeclaringClass().getClassLoader(),
+                    "com.android.systemui.statusbar.policy.KeyguardStateControllerImpl");
+            Method changed=Reflect.method(type,"notifyKeyguardState",void.class,boolean.class,boolean.class);
+            hooks.add(module.hook(changed).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain->{
+                Session current=session;
+                boolean showing=(boolean)chain.getArg(0);
+                if(current!=null && Looper.myLooper()==Looper.getMainLooper() && showing)current.keyguardEntering();
+                Object result=chain.proceed();
+                if(current!=null && current==session && Looper.myLooper()==Looper.getMainLooper() && !showing)current.keyguardLeaving();
+                return result;
+            }));
+            module.report(DiagnosticPoint.LOCKSCREEN,DiagnosticPoint.State.READY);
+        }catch(ReflectiveOperationException|RuntimeException|LinkageError unavailable){
+            // Keep the older firmware's system state and screen broadcast observers.
+            module.report(DiagnosticPoint.LOCKSCREEN,DiagnosticPoint.State.WAITING);
+        }
     }
     private interface Observation{void run(XposedInterface.Chain chain);}
     private void after(Method method,Observation observer){
@@ -115,7 +136,7 @@ final class ColorOsAdapter {
         Object manager=Reflect.get(managerField,controller);
         if(Reflect.get(windowField,manager)==null){pendingController=controller;return;}
         pendingController=null;
-        try{Session next=new Session(controller,host,manager);session=next;next.start();module.info("Unified presentation captured on display "+host.getDisplay().getDisplayId());}
+        try{Session next=new Session(controller,host,manager);session=next;next.start();module.report(DiagnosticPoint.SCENE_HOST,DiagnosticPoint.State.READY);module.info("Unified presentation captured on display "+host.getDisplay().getDisplayId());}
         catch(ReflectiveOperationException|RuntimeException|LinkageError error){disable(error);}
     }
     private static View root(ViewGroup host){for(int i=0;i<host.getChildCount();i++)if(ROOT.equals(host.getChildAt(i).getClass().getName()))return host.getChildAt(i);return null;}
@@ -123,6 +144,7 @@ final class ColorOsAdapter {
     private void disable(Throwable error){
         if(Looper.myLooper()!=Looper.getMainLooper()){main.post(()->disable(error));return;}
         if(disabled)return;disabled=true;module.error("Unified presentation unavailable; restoring native output",error);
+        module.report(DiagnosticPoint.SCENE_HOST,DiagnosticPoint.State.FAILED);
         Session previous=session;session=null;if(previous!=null)previous.close();
     }
     void configurationChanged(){if(session!=null)session.signal();}
@@ -132,7 +154,7 @@ final class ColorOsAdapter {
         return null;
     }
     void mediaWavePixels(View view){
-        if(session!=null && session.window!=null && under(view,session.host))session.window.sourceChanged(false);
+        if(session!=null && session.window!=null && under(view,session.host))session.window.repaintPixels();
     }
     private static boolean under(View view,View root){
         for(View node=view;node!=null;node=node.getParent() instanceof View parent?parent:null)if(node==root)return true;
@@ -188,13 +210,11 @@ final class ColorOsAdapter {
                     Reflect.type(loader,"com.android.systemui.statusbar.CommandQueue$Callbacks"),Reflect.type(loader,"com.android.systemui.statusbar.CommandQueue"),
                     Reflect.type(loader,"kotlinx.coroutines.flow.StateFlow")):NativeWindowState.legacy(source,source.getClass(),
                     Reflect.type(loader,"com.android.systemui.statusbar.window.StatusBarWindowStateListener"));
-            scope=new CapsuleViewScope(host);scope.refresh((ViewGroup)Reflect.get(fakeHostField,controller));
-            sourceSignals=new NativeCapsuleSignals((method,layout)->pluginHooks.add(module.hook(method)
+            sourceSignals=new NativeCapsuleSignals((method,change)->pluginHooks.add(module.hook(method)
                     .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain->{
-                        Object result=chain.proceed();try{if(!closed && scope.nativeSource(chain.getThisObject()) && (window==null || !window.isBusy())){
-                            if(window!=null)window.sourceChanged(layout);if(layout)signal();else coordinatorInvalidate();
-                        }}catch(RuntimeException|LinkageError error){windowFailure(error);}return result;
+                        Object result=chain.proceed();sourceChanged(chain.getThisObject(),change);return result;
                     })));
+            scope=new CapsuleViewScope(host,sourceSignals::observe);
             shade=new NativeShadeState(()->(ViewGroup)Reflect.get(fakeHostField,controller),this::hookShade);
             displays=context.getSystemService(DisplayManager.class);power=context.getSystemService(PowerManager.class);keyguard=context.getSystemService(KeyguardManager.class);
             if(state==null || displays==null || power==null || keyguard==null)throw new IllegalStateException("Missing presentation services");
@@ -206,7 +226,17 @@ final class ColorOsAdapter {
                 if(!method.getName().equals("onPanelExpandFractionChange")){environment.invalidate();signal();}
             });
         }
-        void coordinatorInvalidate(){if(coordinator!=null)coordinator.invalidate();}
+        void sourceChanged(Object target, NativeCapsuleSignals.Change change){
+            try{
+                if(closed || !scope.nativeSource(target) || window!=null && window.isBusy())return;
+                boolean layout=change==NativeCapsuleSignals.Change.LAYOUT;
+                if(window!=null){
+                    if(change==NativeCapsuleSignals.Change.PIXELS)window.repaintPixels();
+                    else window.sourceChanged(layout);
+                }
+                if(layout)signal();
+            }catch(RuntimeException|LinkageError error){windowFailure(error);}
+        }
         void start()throws ReflectiveOperationException{
             cleanup.add(nativeWindow::close);nativeWindow.start(host.getDisplay().getDisplayId(),this::signal);
             cleanup.add(()->Reflect.call(removeState,state,stateListener));Reflect.call(addState,state,stateListener);
@@ -226,7 +256,7 @@ final class ColorOsAdapter {
             host.addOnAttachStateChangeListener(attachment);cleanup.add(()->host.removeOnAttachStateChangeListener(attachment));
             View.OnLayoutChangeListener layout=(v,l,t,r,b,ol,ot,or,ob)->{cameraDirty=true;environment.invalidate();signal();};
             host.addOnLayoutChangeListener(layout);cleanup.add(()->host.removeOnLayoutChangeListener(layout));
-            installPluginContracts(root(host).getClass().getClassLoader());sourceSignals.discover(host);signal();
+            installPluginContracts(root(host).getClass().getClassLoader());scope.refresh((ViewGroup)Reflect.get(fakeHostField,controller));signal();
         }
         void installPluginContracts(ClassLoader loader)throws ReflectiveOperationException{
             interaction=new NativeShadeInteraction(loader);
@@ -350,14 +380,32 @@ final class ColorOsAdapter {
         }
         CloudConfig sceneConfig(){return module.config.forOrientation(landscape());}
         boolean landscape(){return host.getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE;}
-        boolean allowed(){return !closed && !disabled && host.isAttachedToWindow() && root(host)!=null && environment.get(()->{
+        private boolean keyguardHandoff;
+        void keyguardEntering(){
+            if(keyguardHandoff || closed)return;
+            keyguardHandoff=true;
+            environment.invalidate();
+            try{
+                coordinator.returnToNative();
+                if(retention!=null)retention.restore();
+                module.report(DiagnosticPoint.LOCKSCREEN,DiagnosticPoint.State.NATIVE);
+            }catch(RuntimeException|LinkageError error){windowFailure(error);}
+        }
+        void keyguardLeaving(){
+            if(!keyguardHandoff)return;
+            keyguardHandoff=false;
+            module.report(DiagnosticPoint.LOCKSCREEN,DiagnosticPoint.State.READY);
+            refreshNow();
+        }
+        boolean allowed(){return !keyguardHandoff && !closed && !disabled && host.isAttachedToWindow() && root(host)!=null && environment.get(()->{
             Display display=host.getDisplay();return display!=null && display.getDisplayId()==Display.DEFAULT_DISPLAY && display.getState()==Display.STATE_ON && power.isInteractive()
                     && !keyguard.isKeyguardLocked() && !(boolean)Reflect.call(keyguardShowing,state) && (int)Reflect.call(statusBarState,state)==0;
         });}
         boolean shadeActive(){
-            float a=(float)Reflect.call(panel,state),b=(float)Reflect.call(notificationFraction,state),c=(float)Reflect.call(qsFraction,state);
-            return (boolean)Reflect.call(qsExpanded,state) || !Float.isFinite(a) || !Float.isFinite(b) || !Float.isFinite(c) || a>0 || b>0 || c>0 || shade.isActive();
+            return (boolean)Reflect.call(qsExpanded,state) || panelVisible(panel) || panelVisible(notificationFraction)
+                    || panelVisible(qsFraction) || shade.isActive();
         }
+        private boolean panelVisible(Method getter){float value=(float)Reflect.call(getter,state);return !Float.isFinite(value) || value>0;}
         void shadeProgressChanged(){
             if(Looper.myLooper()!=Looper.getMainLooper()){signal();return;}
             try{boolean next=shadeActive();if(lastShade==null || next!=lastShade)refreshNow();}
@@ -384,7 +432,8 @@ final class ColorOsAdapter {
         void runRefresh(){
             queued=false;if(closed)return;if(refreshing){signal();return;}refreshing=true;
             try{
-                CloudConfig effective=sceneConfig().withCapsuleOnTop(capsuleOnTop);scope.refresh((ViewGroup)Reflect.get(fakeHostField,controller));sourceSignals.discover(host);
+                CloudConfig effective=sceneConfig().withCapsuleOnTop(capsuleOnTop);
+                scope.refresh((ViewGroup)Reflect.get(fakeHostField,controller));
                 NativeVisibilityProbe.Snapshot facts=visibility.snapshot(host);Object identity=interaction.contentIdentity(host);
                 if(identity==null && interaction.blankRecoverable(host))identity=lastIdentity;else lastIdentity=identity;
                 int windowState=nativeWindow.value();boolean fullscreen=windowState==1 || windowState==2;
@@ -417,7 +466,7 @@ final class ColorOsAdapter {
                     if(window==null)window=new PresentationWindow(host,this::camera,this::allowed,coordinator::accepts,
                             this::signal,coordinator::invalidate,this::windowFailure,false);
                     window.corners=()->module.config.corners().capsule();
-                    window.prepareContent=()->{if(content!=null)content.update(coordinator.ownsContent());scope.refreshSources();sourceSignals.discover(host);};
+                    window.prepareContent=()->{if(content!=null)content.update(coordinator.ownsContent());scope.refreshSources();};
                     window.source.recoverBlank=()->retainShade() && interaction.blankRecoverable(host);
                     window.source.retainRecovery=()->retainShade() && interaction.hasRecoverableItems(host);
                 }

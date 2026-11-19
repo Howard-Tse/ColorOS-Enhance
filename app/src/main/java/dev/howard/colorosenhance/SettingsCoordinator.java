@@ -96,6 +96,8 @@ public final class SettingsCoordinator {
         if ("cloud".equals(group) && MediaWaveBands.KEY.equals(key)) {
             return value instanceof String text && MediaWaveBands.parse(text) != null;
         }
+        if ("cloud".equals(group) && dev.howard.colorosenhance.notifications.NotificationCloudRules.KEY.equals(key))
+            return value instanceof String text && dev.howard.colorosenhance.notifications.NotificationCloudRules.parse(text) != null;
         if ("installer".equals(group) && "target_package".equals(key)) return value instanceof String text
                 && dev.howard.colorosenhance.installer.InstallerPreferences.validPackage(text);
         for (SettingsCatalog.Item item : catalog.items()) {

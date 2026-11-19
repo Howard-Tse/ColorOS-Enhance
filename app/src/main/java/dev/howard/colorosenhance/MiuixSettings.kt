@@ -7,6 +7,7 @@ import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.compose.LocalActivity
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -99,6 +100,7 @@ private sealed interface SettingsModal {
     data class Choice(val title: String, val labels: List<String>, val selected: Int, val choose: (Int) -> Unit) : SettingsModal
     data class Confirm(val title: String, val message: String, val confirm: () -> Unit) : SettingsModal
     data class Order(val revision: Long, val order: IconOrder) : SettingsModal
+    data class Notifications(val revision: Long, val rules: dev.howard.colorosenhance.notifications.NotificationCloudRules) : SettingsModal
     data object Licenses : SettingsModal
 }
 
@@ -185,6 +187,8 @@ private fun SettingsApp(activity: MainActivity, route: String, update: Int) {
                         LazyColumn(modifier.imePadding(), contentPadding = PaddingValues(20.dp, 8.dp, 20.dp, 40.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding())) {
                             item("sim_slots") { SimSettingsContent(app) }
                         }
+                    } else if (route == "cloud_notification_apps") {
+                        NotificationAppSettingsPage(activity, controller, revisionSignal, modifier, ::feedback)
                     } else if (page != null) {
                         FeaturePage(activity, app, page, controller, revisionSignal, modifier, ::open, { modal = it }, ::feedback)
                     }
@@ -217,6 +221,7 @@ private fun SettingsApp(activity: MainActivity, route: String, update: Int) {
                 }
             }
             is SettingsModal.Order -> OrderDialog(activity, current, controller, { modal = null }, ::feedback)
+            is SettingsModal.Notifications -> NotificationRulesDialog(activity, current, controller, { modal = null }, ::feedback)
             SettingsModal.Licenses -> WindowDialog(show = true, title = "开源许可", onDismissRequest = { modal = null }) {
                 Column(Modifier.heightIn(max = 420.dp).verticalScrollCompat()) {
                     Text(remember { activity.assets.open("licenses/NOTICE.txt").bufferedReader().use { it.readText() } }, fontSize = 14.sp)
@@ -368,6 +373,11 @@ private fun Management(app: EnhanceApplication, controller: SettingsUiController
             }
         }
         item("restart_help") { Text("SIM PIN 开机验证和安装器替换首次加载需要整机重启，作用域重启不能代替。", Modifier.padding(horizontal = 10.dp), fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary) }
+        item("diagnostics") { Card(Modifier.fillMaxWidth()) {
+            NavigationRow("模块状态", "检查关键 Hook、作用域与回退记录，保存诊断日志", {
+                dev.howard.colorosenhance.diagnostics.DiagnosticLinks.open(activity)
+            })
+        } }
         item("about_title") { SectionHeading("关于") }
         item("migration") { Card(Modifier.fillMaxWidth()) {
             NavigationRow("旧版设置迁移", "自动识别旧包配置与启用状态", {
@@ -394,7 +404,10 @@ private fun FeaturePage(activity: MainActivity, app: EnhanceApplication, page: S
     var filter by rememberSaveable { mutableStateOf("") }
     val visibleItems = allItems.filter { it.visible(state.values()) && (filter.isBlank() || (it.title() + it.description()).contains(filter, true)) }
     val sections = visibleItems.groupBy { it.section() }
-    val children = SettingsLayout.children(page.route()).filter { it.route() != "sim_slots" && (it.route() != "cloud_landscape" || state.values()["landscape_follow_portrait"] != true) }
+    val children = SettingsLayout.children(page.route()).filter {
+        it.route() != "sim_slots" && it.route() != "cloud_notification_apps"
+                && (it.route() != "cloud_landscape" || state.values()["landscape_follow_portrait"] != true)
+    }
     val listState = rememberLazyListState()
     LazyColumn(modifier, state = listState, contentPadding = PaddingValues(20.dp, 8.dp, 20.dp, 32.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (page.demo().isNotBlank()) item("demo:${page.route()}") { DemoCard(page, state.values()) }
@@ -469,6 +482,39 @@ private fun FeaturePage(activity: MainActivity, app: EnhanceApplication, page: S
         if (page.route() == "sim") item("sim_management") {
             Card(Modifier.fillMaxWidth()) { NavigationRow("卡槽与 PIN", "两张卡分别保存与启用", { open("sim_slots") }) }
             Text("只在手机上输入真实 PIN；每张卡每次开机最多自动尝试一次，失败时保留手动输入。", Modifier.padding(12.dp), fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+        }
+        if (page.route() == "cloud_notifications") {
+            val rules = dev.howard.colorosenhance.notifications.NotificationCloudRules.from(state.values())
+            dev.howard.colorosenhance.notifications.NotificationSettingsOptions.ALL.groupBy { it.section() }.forEach { (heading, options) ->
+                item("notification_heading:$heading") { SectionHeading(heading) }
+                item("notification_options:$heading") {
+                    Card(Modifier.fillMaxWidth()) {
+                        options.forEach { option ->
+                            if (option.toggle()) SwitchPreference(option.selection(rules) == 1, { checked ->
+                                onStatus(controller.put("cloud", dev.howard.colorosenhance.notifications.NotificationCloudRules.KEY,
+                                    option.change(rules, if (checked) 1 else 0).encode(), state.revision()))
+                            }, option.title(), summary = option.summary(), enabled = state.writable())
+                            else BasicComponent(title = option.title(), summary = option.description(rules), enabled = state.writable(), onClick = {
+                                onModal(SettingsModal.Choice(option.title(), option.labels(), option.selection(rules)) { index ->
+                                    onStatus(controller.put("cloud", dev.howard.colorosenhance.notifications.NotificationCloudRules.KEY, option.change(rules, index).encode(), state.revision()))
+                                })
+                            })
+                            if (option.key() == "denylist") BasicComponent(title = "选择应用", summary = if (rules.denylist()) "黑名单 · ${rules.denied().size} 个应用" else "白名单 · ${rules.allowed().size} 个应用",
+                                enabled = state.writable(), onClick = { onModal(SettingsModal.Notifications(state.revision(), rules)) })
+                        }
+                    }
+                }
+            }
+            item("notification_exceptions") {
+                Card(Modifier.fillMaxWidth()) {
+                    BasicComponent(title = "逐应用设置", summary = "名单、浮窗打开与渠道规则", enabled = state.writable(),
+                        onClick = { open("cloud_notification_apps") })
+                    BasicComponent(title = "发送模块自测通知", summary = "仅使用模块自己的通知验证内容、进度、按钮与撤销", onClick = {
+                        activity.startActivity(android.content.Intent(activity, dev.howard.colorosenhance.notifications.NotificationTestActivity::class.java))
+                    })
+                }
+                Text("静默按系统重要程度分类。系统关键提醒、已有流体云及媒体通知保持原厂；锁屏时恢复原通知，不自动弹出。", Modifier.padding(12.dp), fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+            }
         }
         if (page.route() == "installer") item("installer_help") { Text(SettingsCatalog.INSTALLER_HELP, Modifier.padding(10.dp), fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary) }
         if (page.route() == "cloud_scenes") item("scene_help") {
@@ -645,6 +691,57 @@ private fun OrderDialog(activity: MainActivity, dialog: SettingsModal.Order, con
         Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             TextButton("取消", dismiss, Modifier.weight(1f))
             TextButton("保存", { feedback(controller.put("icons", IconOrder.KEY, editor.encodedValue(), dialog.revision)); dismiss() }, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun NotificationAppSettingsPage(activity: MainActivity, controller: SettingsUiController, update: Int,
+                                        modifier: Modifier, feedback: (String) -> Unit) {
+    val state = remember(update) { controller.state("cloud") }
+    var initial by remember { mutableStateOf<SettingsCoordinator.State?>(null) }
+    LaunchedEffect(state) {
+        if (initial == null && state.writable()) initial = state
+    }
+    val snapshot = initial
+    if (snapshot == null) {
+        Box(modifier, contentAlignment = Alignment.Center) {
+            Text("正在连接配置服务…", color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+        }
+        return
+    }
+    val editor = remember(snapshot) {
+        dev.howard.colorosenhance.notifications.NotificationAppPicker(activity,
+            dev.howard.colorosenhance.notifications.NotificationCloudRules.from(snapshot.values()), true)
+    }
+    Column(modifier.imePadding().navigationBarsPadding().padding(horizontal = 20.dp)) {
+        AndroidView(factory = { editor }, modifier = Modifier.fillMaxWidth().weight(1f))
+        TextButton("保存", {
+            try {
+                val result = controller.put("cloud", dev.howard.colorosenhance.notifications.NotificationCloudRules.KEY,
+                    editor.encodedValue(), snapshot.revision())
+                feedback(result)
+                if (result == "ok") activity.finish()
+            } catch (_: IllegalArgumentException) {
+                toast(activity, "规则过多，请减少所选应用或渠道例外后重试。")
+            }
+        }, Modifier.fillMaxWidth().padding(bottom = 8.dp), enabled = state.writable())
+    }
+}
+
+@Composable
+private fun NotificationRulesDialog(activity: MainActivity, dialog: SettingsModal.Notifications, controller: SettingsUiController, dismiss: () -> Unit, feedback: (String) -> Unit) {
+    val editor = remember(dialog) { dev.howard.colorosenhance.notifications.NotificationAppPicker(activity, dialog.rules) }
+    WindowDialog(show = true, onDismissRequest = dismiss, title = if (dialog.rules.denylist()) "选择黑名单应用" else "选择白名单应用") {
+        AndroidView(factory = { editor }, modifier = Modifier.fillMaxWidth().heightIn(max = 440.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            TextButton("取消", dismiss, Modifier.weight(1f))
+            TextButton("保存", {
+                try {
+                    feedback(controller.put("cloud", dev.howard.colorosenhance.notifications.NotificationCloudRules.KEY, editor.encodedValue(), dialog.revision))
+                    dismiss()
+                } catch (_: IllegalArgumentException) { feedback("规则过多，请减少所选应用或渠道例外后重试") }
+            }, Modifier.weight(1f))
         }
     }
 }

@@ -104,6 +104,23 @@ public class CloudPresentationCoordinatorTest {
         core.update(input(KEEP,true,null,false,true));stale.run();
         assertFalse(core.accepts(ticket));assertEquals(CloudPresentationCoordinator.Owner.NATIVE,core.current().owner());assertNull(clock.pending);
     }
+    @Test public void keyguardHandoffRestoresNativeBeforeProtectedStateIsPublished(){
+        Port port=new Port();port.auto=false;Clock clock=new Clock();var core=new CloudPresentationCoordinator(port,clock);
+        core.update(input(KEEP,false,null,true,false));
+        Runnable late=port.callbacks.getLast();var previous=core.current().ticket();
+        int releases=port.releases, requests=port.requests.size();
+        assertTrue(core.retainShade());
+        core.returnToNative();
+        late.run();
+        assertFalse(core.accepts(previous));
+        assertFalse(core.retainShade());
+        assertFalse(core.ownsContent());
+        assertEquals(releases+1,port.releases);
+        assertEquals(CloudPresentationCoordinator.Owner.NATIVE,core.current().owner());
+        core.update(input(KEEP,false,null,true,true));
+        assertEquals(requests,port.requests.size());
+        assertNull(clock.pending);
+    }
     @Test public void contentReplacementRejectsTheOldCompletion(){
         Port port=new Port();port.auto=false;Clock clock=new Clock();var core=new CloudPresentationCoordinator(port,clock);
         core.update(input(KEEP,false,null,false,false));Runnable stale=port.callbacks.getLast();var old=core.current().ticket();
@@ -172,6 +189,17 @@ public class CloudPresentationCoordinatorTest {
         Port port=new Port();port.auto=false;Clock clock=new Clock();var core=new CloudPresentationCoordinator(port,clock);
         core.update(input(KEEP,false,null,false,false));Runnable callback=port.callbacks.getLast();core.close();callback.run();
         core.update(input(KEEP,false,null,false,false));assertFalse(core.ownsContent());assertEquals(CloudPresentationCoordinator.Owner.NATIVE,core.current().owner());assertNull(clock.pending);
+    }
+    @Test public void frequentProtectedUpdatesOnlyReleaseTheOwnedSurfaceOnce(){
+        Port port=new Port();Clock clock=new Clock();var core=new CloudPresentationCoordinator(port,clock);
+        core.update(input(KEEP,false,null,false,false));
+        int releases=port.releases,cancels=port.cancels;
+        for(int i=0;i<20;i++)core.update(input(KEEP,false,null,true,true));
+        assertEquals(releases+1,port.releases);
+        assertEquals(cancels+1,port.cancels);
+        assertNull(clock.pending);
+        core.update(input(KEEP,false,null,false,false));
+        assertEquals(CloudPresentationCoordinator.Owner.MODULE,core.current().owner());
     }
     @Test public void missingContentAndSecondaryDisplaysAlwaysKeepNative(){
         Port port=new Port();Clock clock=new Clock();var core=new CloudPresentationCoordinator(port,clock);

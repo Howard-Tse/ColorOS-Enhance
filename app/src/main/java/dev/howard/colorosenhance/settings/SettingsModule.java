@@ -1,5 +1,8 @@
 package dev.howard.colorosenhance.settings;
 
+import dev.howard.colorosenhance.diagnostics.DiagnosticPoint;
+import dev.howard.colorosenhance.diagnostics.DiagnosticReporter;
+
 import android.content.SharedPreferences;
 import android.util.Log;
 import io.github.libxposed.api.XposedModule;
@@ -27,7 +30,8 @@ public final class SettingsModule extends XposedModule {
             listener=(prefs,key)->reload();
             preferences.registerOnSharedPreferenceChangeListener(listener);
             reload();
-        } catch(Throwable failure) { warn("系统设置入口初始化失败",failure); }
+            DiagnosticReporter.report(DiagnosticPoint.SETTINGS, DiagnosticPoint.State.INSTALLED);
+        } catch(Throwable failure) { DiagnosticReporter.report(DiagnosticPoint.SETTINGS, DiagnosticPoint.State.UNSUPPORTED); warn("系统设置入口初始化失败",failure); }
     }
     private void reload() {
         boolean show=true;

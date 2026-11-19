@@ -102,7 +102,7 @@ final class ControlCenterSession {
             if(scroller==null){
                 if(api.tileStopScroll!=null)call(api.tileStopScroll,tiles);
                 tiles.scrollTo(0,0);
-                scroller=new ControlCenterScroller(root,report);
+                scroller=new ControlCenterScroller(root,report,()->config.get().feedback(wide()));
                 if(api.seamless!=null && !iconMotionFailed)try{iconMotion=api.seamless.create(component,root);}
                 catch(RuntimeException|LinkageError unavailable){iconMotionFailed=true;failed.accept(unavailable);}
             }

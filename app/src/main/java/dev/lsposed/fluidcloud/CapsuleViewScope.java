@@ -3,15 +3,18 @@ package dev.lsposed.fluidcloud;
 import android.view.View;
 import android.view.ViewGroup;
 import java.util.IdentityHashMap;
+import java.util.function.Consumer;
 
 /** Identity-only gates for framework callbacks; unrelated views never walk a parent chain. */
 final class CapsuleViewScope {
     private final ViewGroup source;
+    private final Consumer<View> observe;
     private ViewGroup shade;
     private final IdentityHashMap<View, Boolean> sourceAncestors = new IdentityHashMap<>();
     private final IdentityHashMap<View, Boolean> sourceViews = new IdentityHashMap<>();
     private final IdentityHashMap<View, Boolean> shadeProperties = new IdentityHashMap<>();
-    CapsuleViewScope(ViewGroup source) { this.source = source; }
+    CapsuleViewScope(ViewGroup source) { this(source, view -> { }); }
+    CapsuleViewScope(ViewGroup source, Consumer<View> observe) { this.source = source; this.observe = observe; }
     void refresh(ViewGroup shade) {
         this.shade = shade;
         sourceAncestors.clear();shadeProperties.clear();
@@ -27,6 +30,7 @@ final class CapsuleViewScope {
     void refreshSources() { sourceViews.clear(); collect(source); }
     private void collect(View view) {
         sourceViews.put(view, true);
+        observe.accept(view);
         if (view instanceof ViewGroup group) for (int i = 0; i < group.getChildCount(); i++) collect(group.getChildAt(i));
     }
     boolean nativeSource(Object target) { return sourceViews.containsKey(target); }

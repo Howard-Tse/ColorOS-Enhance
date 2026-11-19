@@ -8,6 +8,8 @@ import java.util.Set;
 public final class SettingsLayout {
     public record Page(String route,String group,String title,String summary,String demo,String parent) { }
     private static final List<Page> PAGES=List.of(
+            new Page("cloud_notifications","cloud","通知转流体云","应用与渠道、通知种类、收纳和卡片交互","","cloud"),
+            new Page("cloud_notification_apps","cloud","逐应用设置","名单、浮窗打开与渠道规则","","cloud_notifications"),
             new Page("cloud_media","cloud","媒体与实时律动","媒体常驻、六频段与采样参数","media","cloud"),
             new Page("cloud_capsule","cloud","小胶囊与交互","尺寸、圆角、边框、循环切换与点击","capsule","cloud"),
             new Page("cloud_cards","cloud","展开卡片","圆角、摄像头区域展开与背景压暗","camera","cloud"),
@@ -40,7 +42,8 @@ public final class SettingsLayout {
     private static boolean belongs(String route,SettingsCatalog.Item item){
         String section=item.section();
         return switch(route){
-            case "cloud" -> false;
+            case "cloud", "cloud_notification_apps" -> false;
+            case "cloud_notifications" -> section.equals("通知转流体云");
             case "cloud_media" -> section.equals("媒体")||section.equals("媒体实时律动参数");
             case "cloud_capsule" -> section.startsWith("小胶囊")||section.equals("点击交互");
             case "cloud_cards" -> section.equals("展开卡片");

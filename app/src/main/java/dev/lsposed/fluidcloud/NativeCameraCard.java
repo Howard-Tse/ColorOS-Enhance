@@ -553,7 +553,10 @@ final class NativeCameraCard {
         // that clip in the same frame, rather than waiting for dispatchDraw at
         // the end of the scene to reveal the full contour.
         Rect mask = activeMorphMask(card);
-        Rect material = mask == null ? new Rect(0, 0, card.getWidth(), card.getHeight()) : new Rect(mask);
+        // Instant cards need their contour at the morph edge for the first appear.
+        // For regular cards the animated clip must cut away the full card's contour.
+        Rect material = mask != null && external.containsKey(card)
+                ? mask : new Rect(0, 0, card.getWidth(), card.getHeight());
         surface.updateOutline(new MaterialOutline(card.getOutlineProvider(), mask == null ? null : new Rect(mask),
                 card.getWidth(), card.getHeight()), material);
     }

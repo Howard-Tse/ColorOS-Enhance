@@ -2,6 +2,8 @@ package com.howard.batterypercentweight.hook;
 
 import android.content.SharedPreferences;
 import android.util.Log;
+import dev.howard.colorosenhance.diagnostics.DiagnosticPoint;
+import dev.howard.colorosenhance.diagnostics.DiagnosticReporter;
 
 import com.howard.batterypercentweight.PreferenceKeys;
 
@@ -34,7 +36,9 @@ public final class BatteryWeightModule extends XposedModule
                     this, param.getClassLoader(), preferences);
             installer.install();
             preferences.registerOnSharedPreferenceChangeListener(this);
+            DiagnosticReporter.report(DiagnosticPoint.BATTERY, DiagnosticPoint.State.INSTALLED);
         } catch (RuntimeException | LinkageError error) {
+            DiagnosticReporter.report(DiagnosticPoint.BATTERY, DiagnosticPoint.State.UNSUPPORTED);
             safeLog("Unable to initialize SystemUI battery hooks", error);
         }
     }

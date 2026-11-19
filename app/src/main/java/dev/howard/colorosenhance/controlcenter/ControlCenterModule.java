@@ -1,5 +1,8 @@
 package dev.howard.colorosenhance.controlcenter;
 
+import dev.howard.colorosenhance.diagnostics.DiagnosticPoint;
+import dev.howard.colorosenhance.diagnostics.DiagnosticReporter;
+
 import android.content.SharedPreferences;
 import android.graphics.Canvas;
 import android.os.Handler;
@@ -113,6 +116,7 @@ public final class ControlCenterModule extends XposedModule {
                 try{return chain.proceed();}finally{owner.endFade(view,canvas,save);}
             }));
             deoptimize(api.attach);deoptimize(api.dispatch);deoptimize(api.intercept);deoptimize(api.touch);deoptimize(api.subSize);deoptimize(api.setLocations);deoptimize(api.gridNum);deoptimize(api.refreshPages);
+            DiagnosticReporter.report(DiagnosticPoint.CONTROL_CENTER, DiagnosticPoint.State.INSTALLED);
             log(Log.INFO,"ControlCenter","Native grid/scroll contracts installed; seamless scroll handoff="+(api.seamless!=null)+"; optional controls default off");
         }catch(ReflectiveOperationException|RuntimeException|LinkageError error){
             for(var handle:hooks)handle.unhook();hooks.clear();for(var session:sessions.values())session.close();sessions.clear();warn(error);
@@ -123,5 +127,5 @@ public final class ControlCenterModule extends XposedModule {
         if(!previous.equals(config))log(Log.INFO,"ControlCenter","Configuration changed: "+config);
         main.post(()->{for(var session:sessions.values())session.settingsChanged();});}
     private void safe(Runnable action){try{action.run();}catch(RuntimeException|LinkageError error){warn(error);}}
-    private void warn(Throwable error){log(Log.ERROR,"ControlCenter","Control-center adapter unavailable; native behavior retained",error);}
+    private void warn(Throwable error){DiagnosticReporter.report(DiagnosticPoint.CONTROL_CENTER, DiagnosticPoint.State.FAILED);log(Log.ERROR,"ControlCenter","Control-center adapter unavailable; native behavior retained",error);}
 }

@@ -8,6 +8,11 @@ final class CapsulePresentationGeometry {
     record Profile(RectF dot,float extraWidth,float blurRadius) { }
     record Geometry(RectF bounds, Matrix forward, Matrix inverse, Matrix contentForward,
                     float fraction,float contentAlpha,float blurRadius,float moonAlpha,float moonShift) { }
+    static Geometry steady(RectF content) {
+        if (!valid(content)) return null;
+        Matrix identity = new Matrix();
+        return new Geometry(new RectF(content), identity, identity, identity, 1,1,0,1,0);
+    }
     static Geometry resolve(RectF content, RectF camera, double fraction) {
         if(!valid(content) || !Double.isFinite(fraction))return null;
         if(!valid(camera)){if(fraction<.999)return null;camera=content;}

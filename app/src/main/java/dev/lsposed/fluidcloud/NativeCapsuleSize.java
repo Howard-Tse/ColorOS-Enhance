@@ -19,7 +19,7 @@ final class NativeCapsuleSize {
         if (measure.getDeclaringClass() != capsule) throw new NoSuchMethodException("Native capsule measurement");
     }
     @android.annotation.SuppressLint("DiscouragedApi")
-    void afterMeasure(View view, int widthSpec, CapsuleSize size) {
+    void afterMeasure(View view, int widthSpec, CapsuleSize size, int externalLimit) {
         if (size.original() && !views.containsKey(view)) return;
         if (!views.containsKey(view)) view.addOnLayoutChangeListener(layout);
         views.put(view, size);
@@ -30,7 +30,7 @@ final class NativeCapsuleSize {
         int heightLimit = h;
         int id = view.getResources().getIdentifier("status_bar_height", "dimen", "android");
         if (id != 0) heightLimit = Math.max(h, view.getResources().getDimensionPixelSize(id));
-        int width = CapsuleSize.dimension(w, size.widthPercent(), widthLimit);
+        int width = CapsuleSize.dimension(w, size.widthPercent(), Math.min(widthLimit, externalLimit));
         int height = CapsuleSize.dimension(h, size.heightPercent(), heightLimit);
         Reflect.call(measured, view, width | (view.getMeasuredWidthAndState() & View.MEASURED_STATE_MASK),
                 height | (view.getMeasuredHeightAndState() & View.MEASURED_STATE_MASK));

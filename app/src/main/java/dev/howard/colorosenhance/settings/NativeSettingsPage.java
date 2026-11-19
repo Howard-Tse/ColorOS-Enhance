@@ -31,6 +31,9 @@ final class NativeSettingsPage {
     private final Map<String,Object> controls=new LinkedHashMap<>();
     private final Map<Object,NativeNumberRow> numberRows=new IdentityHashMap<>();
     private NativePageInsets pageInsets;
+    private android.widget.LinearLayout notificationAppsPage;
+    private android.view.View notificationAppsList;
+    private android.widget.Button notificationAppsSave;
     private boolean insetsInitialized;
     private final Map<String,Bundle> states=new HashMap<>();
     private final Set<String> freshGroups=new HashSet<>();
@@ -79,6 +82,8 @@ final class NativeSettingsPage {
                     jump(groups,"open_"+group.key(),group.title(),()->open(group.key()));}
             }
             Object integration=category("integration","模块管理");
+            Object diagnostics=jump(integration,"module_diagnostics","模块状态",()->dev.howard.colorosenhance.diagnostics.DiagnosticLinks.open(context));
+            host.call(diagnostics,"setSummary","检查关键 Hook、作用域与回退记录，保存诊断日志");
             toggle(integration,"launcher_visible","显示桌面图标","隐藏后可从此页面或 LSPosed 模块设置恢复，桌面刷新可能稍有延迟。",value->{
                 Bundle request=command("launcher_visibility"); request.putBoolean("visible",value); managementAction(request);
             });
@@ -132,7 +137,7 @@ final class NativeSettingsPage {
             }
             Object pages=null;
             for(var child:SettingsLayout.children(pageRoute)){
-                if(child.route().equals("sim_slots"))continue;
+                if(child.route().equals("sim_slots") || child.route().equals("cloud_notification_apps"))continue;
                 if(pages==null)pages=category("pages","功能分类");
                 Object target=jump(pages,"open_"+child.route(),child.title(),()->open(child.route()));
                 host.call(target,"setSummary",child.summary());
@@ -162,6 +167,9 @@ final class NativeSettingsPage {
                 jump(waveParameters, MediaWaveBands.KEY, SettingsCatalog.WAVE_BANDS_TITLE, this::editWaveBands);
                 jump(waveParameters, "reset_wave", SettingsCatalog.WAVE_RESET_TITLE, this::resetWave);
             }
+            if ("cloud_notifications".equals(pageRoute)) buildNotificationOptions();
+            if ("cloud_notification_apps".equals(pageRoute)) jump(information, "notification_apps_fallback",
+                    "在独立应用打开逐应用设置", this::openStandaloneNotificationApps);
             Object management=null;
             if(pageRoute.equals(route)||"icons_visibility".equals(pageRoute))management=category("management",null);
             if("installer".equals(route)) {
@@ -237,7 +245,16 @@ final class NativeSettingsPage {
         dialogs.clear(); if(backend!=null) backend.close(); backend=null; render();
         if(pageInsets!=null)pageInsets.pause();
     }
-    void releaseView(){if(pageInsets!=null){pageInsets.close();pageInsets=null;}}
+    void releaseView(){
+        if(pageInsets!=null){pageInsets.close();pageInsets=null;}
+        if (notificationAppsPage != null && notificationAppsPage.getParent() instanceof android.view.ViewGroup parent)
+            parent.removeView(notificationAppsPage);
+        if (notificationAppsList != null) {
+            notificationAppsList.removeOnLayoutChangeListener(notificationAppsInsets);
+            notificationAppsList.setVisibility(android.view.View.VISIBLE);
+        }
+        notificationAppsPage = null; notificationAppsList = null; notificationAppsSave = null;
+    }
     void clearInputs() { dialogs.clear(); }
     void bindNumber(Object preference,android.view.ViewGroup row){
         NativeNumberRow binding=numberRows.get(preference);if(binding!=null)binding.bind(row,host);
@@ -394,6 +411,92 @@ final class NativeSettingsPage {
             request.putString("value",encoded);request.putLong("revision",revision);write("icons",request);
         });
     }
+    private void buildNotificationOptions() throws ReflectiveOperationException {
+        String section = null; Object parent = null;
+        for (var option : dev.howard.colorosenhance.notifications.NotificationSettingsOptions.ALL) {
+            if (!option.section().equals(section)) { section = option.section(); parent = category("notification_" + section, section); }
+            String key = "notification_option_" + option.key();
+            if (option.toggle()) toggle(parent, key, option.title(), option.summary(), checked -> {
+                var rules = dev.howard.colorosenhance.notifications.NotificationCloudRules.from(valueMap("cloud"));
+                put("cloud", dev.howard.colorosenhance.notifications.NotificationCloudRules.KEY, option.change(rules, checked ? 1 : 0).encode());
+            });
+            else jump(parent, key, option.title(), () -> {
+                if (!writable("cloud")) return;
+                var rules = dev.howard.colorosenhance.notifications.NotificationCloudRules.from(valueMap("cloud"));
+                long revision = states.get("cloud").getLong("revision");
+                dialogs.choice(option.title(), option.labels().toArray(CharSequence[]::new), option.selection(rules), index ->
+                        saveNotificationRules(option.change(rules, index).encode(), revision));
+            });
+            if (option.key().equals("denylist")) jump(parent, "notification_apps", "选择应用", this::editNotificationRules);
+        }
+        Object exceptions = category("notification_exceptions", "应用与渠道例外");
+        jump(exceptions, "notification_channels", "逐应用设置", () -> open("cloud_notification_apps"));
+        Object help = jump(exceptions, "notification_help", "渠道获取与处理规则", () -> { });
+        host.call(help, "setSummary", "选择应用后可查询实际渠道名称与 ID；应用尚未创建渠道时，先发一条通知再刷新。静默按系统重要程度分类，不跟随手机响铃模式。锁屏、已有原生流体云、媒体与系统关键提醒保持原厂处理。");
+        host.call(help, "setSelectable", false);
+        jump(exceptions, "notification_test", "发送模块自测通知", () -> context.startActivity(new android.content.Intent()
+                .setClassName(dev.howard.colorosenhance.BuildConfig.PUBLIC_APPLICATION_ID,
+                        "dev.howard.colorosenhance.notifications.NotificationTestActivity").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)));
+    }
+    private void saveNotificationRules(String encoded, long revision) {
+        saveNotificationRules(encoded, revision, () -> {});
+    }
+    private void saveNotificationRules(String encoded, long revision, Runnable success) {
+        if (!writable("cloud")) return;
+        Bundle request = command("put"); request.putString("group", "cloud");
+        request.putString("key", dev.howard.colorosenhance.notifications.NotificationCloudRules.KEY);
+        request.putString("value", encoded); request.putLong("revision", revision); write("cloud", request, success);
+    }
+    private void editNotificationRules() {
+        if (!writable("cloud")) return;
+        long revision = states.get("cloud").getLong("revision");
+        dialogs.notificationRules(dev.howard.colorosenhance.notifications.NotificationCloudRules.from(valueMap("cloud")),
+                encoded -> saveNotificationRules(encoded, revision));
+    }
+    private void openStandaloneNotificationApps() {
+        context.startActivity(new Intent().setClassName(dev.howard.colorosenhance.BuildConfig.PUBLIC_APPLICATION_ID,
+                "dev.howard.colorosenhance.MainActivity").putExtra("group", "cloud_notification_apps")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    }
+    private void renderNotificationApps(boolean writable) throws ReflectiveOperationException {
+        if (notificationAppsPage == null && active && writable("cloud")) {
+            Object list = host.call(fragment, "getListView");
+            if (!(list instanceof android.view.View original) || !(original.getParent() instanceof android.widget.FrameLayout parent)) return;
+            var rules = dev.howard.colorosenhance.notifications.NotificationCloudRules.from(valueMap("cloud"));
+            long revision = states.get("cloud").getLong("revision");
+            var page = new android.widget.LinearLayout(context);
+            page.setOrientation(android.widget.LinearLayout.VERTICAL);
+            var picker = new dev.howard.colorosenhance.notifications.NotificationAppPicker(context, rules, true);
+            page.addView(picker, new android.widget.LinearLayout.LayoutParams(-1, 0, 1f));
+            var button = new android.widget.Button(context);
+            button.setText("保存");
+            button.setOnClickListener(v -> {
+                try {
+                    saveNotificationRules(picker.encodedValue(), revision, () -> {
+                        if (context instanceof Activity owner) owner.finish();
+                        else try {
+                            if (host.call(fragment, "getActivity") instanceof Activity owner) owner.finish();
+                        } catch (ReflectiveOperationException unavailable) { message("设置已保存"); }
+                    });
+                } catch (IllegalArgumentException exceeded) {
+                    message("规则过多，请减少所选应用或渠道例外后重试。");
+                }
+            });
+            page.addView(button, new android.widget.LinearLayout.LayoutParams(-1, -2));
+            page.setPadding(original.getPaddingLeft(), original.getPaddingTop(), original.getPaddingRight(), original.getPaddingBottom());
+            original.addOnLayoutChangeListener(notificationAppsInsets);
+            parent.addView(page, new android.widget.FrameLayout.LayoutParams(-1, -1));
+            original.setVisibility(android.view.View.INVISIBLE);
+            notificationAppsPage = page;
+            notificationAppsList = original;
+            notificationAppsSave = button;
+        }
+        if (notificationAppsSave != null) notificationAppsSave.setEnabled(writable);
+    }
+    private final android.view.View.OnLayoutChangeListener notificationAppsInsets = (view, left, top, right, bottom, a, b, c, d) -> {
+        if (notificationAppsPage != null)
+            notificationAppsPage.setPadding(view.getPaddingLeft(), view.getPaddingTop(), view.getPaddingRight(), view.getPaddingBottom());
+    };
     private void editWaveBands() {
         Map<String,Object> values = valueMap(route);
         if (!writable(route) || !SettingsCatalog.controlEnabled(route, MediaWaveBands.KEY, values)) return;
@@ -427,12 +530,16 @@ final class NativeSettingsPage {
         Bundle request=command("reset"); request.putString("group",group); request.putLong("revision",revision); write(group,request);
     }
     private void write(String group,Bundle request) {
+        write(group, request, () -> {});
+    }
+    private void write(String group,Bundle request,Runnable success) {
         beginBusy(group,"正在保存…");
         send(request,response->{
             finishBusy(group);
             String status=response.getString("status","failed");
             notice="ok".equals(status) ? "" : explain(status);
             receiveConfig(group,response); render();
+            if ("ok".equals(status)) success.run();
         });
     }
     private void beginBusy(String group,String message) {
@@ -539,6 +646,18 @@ final class NativeSettingsPage {
                     enabled("reset_wave", waveWritable);
                     summary(controls.get("reset_wave"), SettingsCatalog.WAVE_RESET_HELP);
                 }
+                if ("cloud_notifications".equals(pageRoute)) {
+                    var rules = dev.howard.colorosenhance.notifications.NotificationCloudRules.from(valueMap("cloud"));
+                    for (var option : dev.howard.colorosenhance.notifications.NotificationSettingsOptions.ALL) {
+                        String key = "notification_option_" + option.key(); enabled(key, writable);
+                        if (option.toggle()) checked(key, option.selection(rules) == 1);
+                        summary(controls.get(key), option.description(rules));
+                    }
+                    enabled("notification_apps", writable); enabled("notification_channels", writable);
+                    summary(controls.get("notification_apps"), (rules.denylist() ? "黑名单 · " + rules.denied().size() : "白名单 · " + rules.allowed().size()) + " 个应用");
+                    summary(controls.get("notification_channels"), rules.overrides().size() + " 条例外；支持按名称查询实际渠道");
+                }
+                if ("cloud_notification_apps".equals(pageRoute)) renderNotificationApps(writable);
                 for(NativeNumberRow row:numberRows.values())row.update();
                 SettingsCatalog.Group currentGroup=SettingsCatalog.find(route,context);
                 for(String section:SettingsLayout.items(context,pageRoute).stream().map(SettingsCatalog.Item::section).distinct().toList())

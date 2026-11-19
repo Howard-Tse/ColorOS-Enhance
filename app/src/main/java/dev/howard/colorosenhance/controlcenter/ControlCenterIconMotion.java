@@ -27,8 +27,11 @@ final class ControlCenterIconMotion implements AutoCloseable {
         // A hidden panel may not get another pre-draw until it opens again.
         // Release suppression now, so the next ordinary opening is native.
         if(root.getVisibility()!=View.VISIBLE){removeDraw();queued=false;reset();return;}
-        if(!closed && !queued && root.getViewTreeObserver().isAlive()){
-            queued=true;root.getViewTreeObserver().addOnPreDrawListener(draw);
+        // Only the handoff from a scrolled panel needs an extra pre-draw pass.
+        if(!departing && (fraction>=1 || root.getScrollY()==0))return;
+        ViewTreeObserver observer=root.getViewTreeObserver();
+        if(!queued && observer.isAlive()){
+            queued=true;observer.addOnPreDrawListener(draw);
         }
     }
     private void removeDraw(){if(root.getViewTreeObserver().isAlive())root.getViewTreeObserver().removeOnPreDrawListener(draw);}
@@ -96,8 +99,9 @@ final class ControlCenterIconMotion implements AutoCloseable {
             last.set(output);owned=true;
         }
         void restore(){
+            if(!owned)return;
             Matrix current=view.getAnimationMatrix();
-            if(owned && current!=null && current.equals(last))view.setAnimationMatrix(hadBaseline?baseline:null);
+            if(current!=null && current.equals(last))view.setAnimationMatrix(hadBaseline?baseline:null);
             owned=false;
         }
     }

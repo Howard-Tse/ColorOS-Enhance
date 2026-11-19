@@ -17,6 +17,7 @@ final class ControlCenterScroller {
     private final ControlCenterPhysics fling;
     private final ControlCenterFrameRate frameRate;
     private final ControlCenterStretch stretch;
+    private final ControlCenterBoundaryFeedback boundaryFeedback;
     private final int slop,minVelocity,maxVelocity;
     private final Runnable frame=this::advance;
     private VelocityTracker velocity;
@@ -26,18 +27,25 @@ final class ControlCenterScroller {
     private long lastMovement;
     private boolean bottomOnDown,bottomEdge,slider,dragging,edgeSent,catchingMotion,captured;
     ControlCenterScroller(ViewGroup root){this(root,ignored->{});}
-    ControlCenterScroller(ViewGroup root,Consumer<String> report){
+    ControlCenterScroller(ViewGroup root,Consumer<String> report){this(root,report,()->false);}
+    ControlCenterScroller(ViewGroup root,Consumer<String> report,java.util.function.BooleanSupplier haptics){
         this.root=root;fling=new ControlCenterPhysics(root,report);frameRate=new ControlCenterFrameRate(root);stretch=new ControlCenterStretch(root,fling.notificationExtension,report);
         var limits=ViewConfiguration.get(root.getContext());slop=limits.getScaledTouchSlop();
         minVelocity=limits.getScaledMinimumFlingVelocity();maxVelocity=limits.getScaledMaximumFlingVelocity();
+        boundaryFeedback=new ControlCenterBoundaryFeedback(haptics,()->{
+            // Same View haptic as COUIRecyclerView/COUIScrollView at their limits.
+            // No custom vibration waveform or ignore-system-setting flags.
+            if(!root.performHapticFeedback(307))root.performHapticFeedback(20); // Android SCROLL_LIMIT fallback.
+        },slop);
     }
-    void resize(int range){int next=Math.max(0,range);if(this.range!=next){this.range=next;cancelMotion();stretch.clear();position=Math.max(0,Math.min(next,root.getScrollY()));render(position);}}
+    void resize(int range){int next=Math.max(0,range);if(this.range!=next){this.range=next;cancelMotion();stretch.clear();boundaryFeedback.clear();position=Math.max(0,Math.min(next,root.getScrollY()));render(position);}}
     void begin(MotionEvent event){
         boolean moving=rebound!=null || !fling.finished() || outside() || stretch.hasOffsets();
         cancelMotion();recycleVelocity();dragging=false;captured=false;
         downX=event.getX();downY=lastY=event.getY();bottomOnDown=range<=0 || root.getScrollY()>=range-1;
         stretch.prepare();position=stretch.available()?stretch.position(range):ControlCenterPhysics.unmapEdge(root.getScrollY(),range,fling.edgeFactor);
         catchingMotion=moving || outside();
+        boundaryFeedback.begin(position,range);
         stretch.begin(Math.max(0,Math.min(range,position)),range);lastMovement=event.getEventTimeNanos();
         var insets=root.getRootWindowInsets();int bottom=insets==null?0:insets.getInsets(android.view.WindowInsets.Type.systemGestures()).bottom;
         bottomEdge=downY>=root.getHeight()-Math.max(bottom,22*root.getResources().getDisplayMetrics().density);
@@ -58,7 +66,7 @@ final class ControlCenterScroller {
     boolean touch(MotionEvent event){
         if(!dragging)return false;if(velocity!=null)velocity.addMovement(event);
         switch(event.getActionMasked()){
-            case MotionEvent.ACTION_MOVE -> {float y=event.getY();render(position+lastY-y);lastY=y;}
+            case MotionEvent.ACTION_MOVE -> {float y=event.getY();render(position+lastY-y,true);lastY=y;}
             case MotionEvent.ACTION_POINTER_UP -> {int index=event.getActionIndex()==0?1:0;if(index<event.getPointerCount()){lastY=event.getY(index);if(velocity!=null)velocity.clear();}}
             case MotionEvent.ACTION_UP -> {
                 if(outside())startRebound();
@@ -79,9 +87,12 @@ final class ControlCenterScroller {
     }
     private int maxOver(){return Math.max(1,Math.round(root.getHeight()*1.5f));}
     private boolean outside(){return position<0 || position>range;}
-    private void render(float raw){
+    private void render(float raw){render(raw,false);}
+    private void render(float raw,boolean userMotion){
+        float previousPosition=position;
         float previous=ControlCenterPhysics.mapEdge(position,range,fling.edgeFactor);
         position=Math.max(-maxOver(),Math.min(range+maxOver(),raw));
+        if(userMotion)boundaryFeedback.motion(previousPosition,position,range);
         int next=Math.round(ControlCenterPhysics.mapEdge(position,range,fling.edgeFactor));long now=System.nanoTime();
         if(lastMovement>0 && now>lastMovement)frameRate.velocity(Math.abs(next-previous)*1_000_000_000f/(now-lastMovement));
         lastMovement=now;
@@ -91,7 +102,7 @@ final class ControlCenterScroller {
     private void advance(){
         try{
             if(fling.advance()){
-                int y=fling.y();render(y);
+                int y=fling.y();render(y,true);
                 if(!edgeSent && outside()){edgeSent=true;fling.edge(y,Math.max(0,Math.min(range,y)),range,maxOver());}
                 if(!fling.finished())root.postOnAnimation(frame);else finishInertia();
             }else finishInertia();
@@ -117,7 +128,7 @@ final class ControlCenterScroller {
         frameRate.release();
     }
     private void recycleVelocity(){if(velocity!=null){velocity.recycle();velocity=null;}}
-    void reset(){cancelMotion();stretch.clear();recycleVelocity();dragging=false;position=0;root.scrollTo(0,0);}
+    void reset(){cancelMotion();stretch.clear();recycleVelocity();boundaryFeedback.clear();dragging=false;position=0;root.scrollTo(0,0);}
     void close(){reset();stretch.dispose();}
     private static boolean protectedControl(View view,float x,float y){
         if(view.getVisibility()!=View.VISIBLE)return false;

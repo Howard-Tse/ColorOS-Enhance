@@ -69,10 +69,11 @@ final class CloudPresentationCoordinator {
             boolean missing=!next.contentAvailable() || next.content()==null;
             if(missing && !controlled)policy=-1;
             if (policy < 0) {
+                boolean hasOutput = controlled || waiting || committed != Owner.NATIVE || requested != Owner.NATIVE;
                 controlled = suspended = false;
                 stopFrames();
                 if (next.protectedState() || !next.config().scenesEnabled() || !next.contentAvailable()) {
-                    invalidateTicket(); port.cancelTouch(); port.release();
+                    if (hasOutput) { invalidateTicket(); port.cancelTouch(); port.release(); }
                     requested = committed = Owner.NATIVE; waiting = false;
                 } else request(Owner.NATIVE);
                 return;
@@ -187,6 +188,11 @@ final class CloudPresentationCoordinator {
         try { port.failure(error); } catch (RuntimeException | LinkageError ignored) { }
     }
     void unavailable(Throwable error) { fail(error); }
+    void returnToNative() {
+        if (closed || failed) return;
+        try { reset(); }
+        finally { input = null; lastTime = 0; }
+    }
     void close() {
         if (closed) return;
         try { reset(); }

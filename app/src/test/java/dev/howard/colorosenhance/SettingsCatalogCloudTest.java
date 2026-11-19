@@ -10,7 +10,7 @@ import static org.junit.Assert.*;
 public class SettingsCatalogCloudTest {
     @Test public void newChoicesAreSharedOptInControlsIndependentOfUnbindAndNumericWritesAreBounded(){
         var values=Map.<String,Object>of("enabled",true);
-        for(String key:List.of("realtime_media_wave","hide_capsule_stroke","hide_capsule_arrows","skip_empty_capsule","card_dim_enabled",
+        for(String key:List.of("realtime_media_wave","hide_capsule_stroke","hide_capsule_arrows","capsule_keep_in_foreground","skip_empty_capsule","card_dim_enabled",
                 "capsule_corners_enabled","card_corners_enabled","capsule_size_enabled","selected_card_first")){
             assertFalse(item(key).defaultFlag());assertTrue(SettingsCatalog.controlEnabled("cloud",key,values));
             assertFalse(SettingsCatalog.controlEnabled("cloud",key,Map.of()));assertTrue(SettingsCoordinator.validValue("cloud",key,true));
@@ -23,8 +23,8 @@ public class SettingsCatalogCloudTest {
     @Test public void cloudCatalogContainsThreeScenePairsWithOemDefaults() {
         SettingsCatalog.Group cloud = SettingsCatalog.find("cloud");
         assertNotNull(cloud);
-        assertEquals(List.of("keep_paused_music", "realtime_media_wave", "wave_interval_ms", "wave_sensitivity", "wave_attack_ms", "wave_release_ms", "wave_hold_paused", "capsule_size_enabled", "capsule_height_percent", "hide_capsule_stroke", "hide_capsule_arrows",
-                "capsule_corners_enabled", "capsule_continuous_corners", "skip_empty_capsule", "block_capsule_click_top", "selected_card_first", "camera_card_expansion", "card_dim_enabled",
+        assertEquals(List.of("notification_cloud_enabled", "notification_popup_seconds", "notification_capsule_max_dp", "keep_paused_music", "media_card_in_shade", "realtime_media_wave", "wave_interval_ms", "wave_sensitivity", "wave_attack_ms", "wave_release_ms", "wave_hold_paused", "capsule_size_enabled", "capsule_height_percent", "hide_capsule_stroke", "hide_capsule_arrows",
+                "capsule_corners_enabled", "capsule_continuous_corners", "capsule_keep_in_foreground", "skip_empty_capsule", "block_capsule_click_top", "selected_card_first", "camera_card_expansion", "card_dim_enabled",
                 "card_corners_enabled", "card_continuous_corners", "unbind_status_bar", "capsule_on_top", "capsule_keep_during_launch", "fullscreen", "fullscreen_animation",
                 "recents", "recents_shrink", "shade_keep", "shade_collapse_on_open", "other_keep", "other_animation",
                 "landscape_follow_portrait", "landscape_fullscreen", "landscape_fullscreen_animation", "landscape_recents", "landscape_recents_shrink",
@@ -53,6 +53,7 @@ public class SettingsCatalogCloudTest {
     @Test public void unbindGateDisablesSceneControlsButLeavesMediaIndependent(){
         Map<String,Object> values=Map.of("enabled",true,"keep_paused_music",true,"fullscreen",true);
         assertTrue(SettingsCatalog.controlEnabled("cloud","keep_paused_music",values));
+        assertTrue(SettingsCatalog.controlEnabled("cloud","media_card_in_shade",values));
         assertTrue(SettingsCatalog.controlEnabled("cloud","block_capsule_click_top",values));
         assertTrue(SettingsCatalog.controlEnabled("cloud","camera_card_expansion",values));
         assertFalse(SettingsCatalog.controlEnabled("cloud","camera_card_expansion",Map.of()));

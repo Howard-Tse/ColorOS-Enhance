@@ -33,7 +33,7 @@ function Test-PrivacyPattern([string]$Text, [string]$Kind) {
     return $false
 }
 $privateArtifact = '(?i)(^|/)(?:\.local|\.signing|\.gradle|\.kotlin|build|captures|shared_prefs)(/|$)|\.(?:p12|pfx|jks|keystore|pem|key|apk|aab|dex|log|mp4|hprof|jfr)$|(^|/)local\.properties$|(^|/)\.env(?:\.|$)'
-$publicDocs = @('docs/PUBLISHING.md', 'docs/PRIVACY.md', 'docs/MIGRATION.md')
+$publicDocs = @('docs/PUBLISHING.md', 'docs/PRIVACY.md', 'docs/MIGRATION.md', 'docs/NOTIFICATION_CLOUD.md')
 $files = @(& git -C $moduleRoot -c core.quotepath=false ls-files --cached --others --exclude-standard)
 if ($LASTEXITCODE -ne 0) { throw 'Cannot enumerate candidate Git files.' }
 $files = @($files | Sort-Object -Unique)

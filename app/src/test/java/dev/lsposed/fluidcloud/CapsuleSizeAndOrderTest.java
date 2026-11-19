@@ -105,7 +105,7 @@ public class CapsuleSizeAndOrderTest {
     private static void measure(NativeCapsuleSize api,Capsule view,CapsuleSize options,int max) {
         int width=View.MeasureSpec.makeMeasureSpec(max,View.MeasureSpec.AT_MOST);
         view.forceLayout();view.measure(width,View.MeasureSpec.makeMeasureSpec(40,View.MeasureSpec.EXACTLY));
-        api.afterMeasure(view,width,options);
+        api.afterMeasure(view,width,options,Integer.MAX_VALUE);
     }
     public static class Capsule extends FrameLayout {
         final View child;

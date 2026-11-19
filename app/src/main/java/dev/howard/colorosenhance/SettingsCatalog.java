@@ -73,12 +73,22 @@ public final class SettingsCatalog {
     }
     private static List<Item> cloudItems() {
         List<Item> items = new ArrayList<>();
+        items.add(flag("通知转流体云", "notification_cloud_enabled", "通知转流体云",
+                "按应用、渠道与通知种类转换，默认空白名单。频繁更新的进度或网速通知会增加 SystemUI 负载，耗电敏感时可排除这些应用或渠道。"));
+        items.add(new Item("通知转流体云", "notification_popup_seconds", "自动展开停留时间",
+                "仅用于选择了自动展开的通知；不打断操作，勿扰或锁屏时不自动展开。", false,
+                "notification_popup_seconds", 3, 1, 15, 1, 1, "秒", new Visibility("notification_cloud_enabled", true), null));
+        items.add(new Item("通知转流体云", "notification_capsule_max_dp", "通知胶囊最大长度",
+                "0 dp 保持原厂宽度。仅限制通知胶囊，内容超出时省略。最小宽度 48 dp。", false,
+                "notification_capsule_max_dp", 0, 0, 240, 1, 1, "dp", new Visibility("notification_cloud_enabled", true), null));
         items.add(flag("媒体","keep_paused_music","保持媒体流体云",
                 "有效媒体会话未播放或暂停时也保持显示；会话结束或应用退出后恢复系统处理。"));
+        items.add(flag("媒体","media_card_in_shade","在通知中心显示媒体卡片",
+                "媒体流体云存在时，也在通知中心显示系统媒体卡片。锁屏按系统处理。"));
         items.add(flag("媒体","realtime_media_wave","媒体实时律动",
-                "六柱从左到右对应低频至高频，可在下方自定义分界。仅播放且小胶囊可见时采集，硬件卸载或无法安全采集时使用原厂动画。更新后需重启系统界面。"));
+                "播放且胶囊可见时持续采样并计算六频段，可能增加耗电。遇到硬件卸载或无法安全采集时使用原厂动画。更新后需重启系统界面。"));
         MediaWaveOptions defaults = MediaWaveOptions.DEFAULTS;
-        items.add(waveNumber("wave_interval_ms","读取间隔","越短响应越快，计算次数也越多。建议先使用 80 ms。",
+        items.add(waveNumber("wave_interval_ms","读取间隔","间隔越短，采样与频谱计算越频繁，可能更耗电。默认 80 ms。",
                 defaults.intervalMs(), MediaWaveOptions.INTERVAL_MIN_MS, MediaWaveOptions.INTERVAL_MAX_MS, MediaWaveOptions.INTERVAL_STEP_MS, "ms"));
         items.add(waveNumber("wave_sensitivity","灵敏度","调整六个频段的整体柱高。",
                 defaults.sensitivityPercent(), MediaWaveOptions.SENSITIVITY_MIN_PERCENT, MediaWaveOptions.SENSITIVITY_MAX_PERCENT, MediaWaveOptions.SENSITIVITY_STEP_PERCENT, "%"));
@@ -103,6 +113,8 @@ public final class SettingsCatalog {
                 "调节半径，最大值随胶囊高度限制。关闭后恢复原厂外形。","capsule_corner_dp",16,0,24,1,1,"dp"));
         items.add(flag("小胶囊外观","capsule_continuous_corners","小胶囊连续圆角",
                 "启用自定义圆角后，使直边与弯曲边缘平滑衔接。"));
+        items.add(flag("小胶囊外观","capsule_keep_in_foreground","前台应用内保留流体云胶囊",
+                "开启后，来源应用在前台时仍可显示自己的胶囊。关闭时保持 ColorOS 原厂行为。"));
         items.add(flag("小胶囊切换","skip_empty_capsule","跳过空白状态，循环切换",
                 "左右滑动仅在当前有效流体云之间循环；只有一个时保持当前项。不影响系统主动隐藏流体云。"));
         items.add(flag("点击交互","block_capsule_click_top","防止点击流体云触发回顶",
@@ -119,7 +131,7 @@ public final class SettingsCatalog {
         items.add(flag("展开卡片","card_continuous_corners","展开卡片连续圆角",
                 "启用自定义圆角后，使直边与弯曲边缘平滑衔接。重新展开卡片后生效。"));
         items.add(flag("场景控制","unbind_status_bar","流体云与状态栏解绑",
-                "开启后重启系统界面，加载下方场景；横竖屏独立配置，横屏默认跟随系统。关闭后立即恢复系统处理。"));
+                "启用后需重启系统界面。模块会额外绘制胶囊，动态内容可能增加耗电。横竖屏可独立设置，横屏默认跟随系统。"));
         items.add(flag("场景控制","capsule_on_top","流体云胶囊置顶",
                 "提高胶囊窗口层级，胶囊可显示在展开卡片上方。修改后重启系统界面。"));
         items.add(flag("场景控制","capsule_keep_during_launch","应用转场时保持胶囊显示",
@@ -159,9 +171,9 @@ public final class SettingsCatalog {
                 && Boolean.TRUE.equals(values.get("landscape_follow_portrait"))) return false;
         if ("shade_collapse_on_open".equals(key) && !Boolean.TRUE.equals(values.get("shade_keep"))) return false;
         if ("landscape_shade_collapse_on_open".equals(key) && !Boolean.TRUE.equals(values.get("landscape_shade_keep"))) return false;
-        return "keep_paused_music".equals(key) || "realtime_media_wave".equals(key) || "block_capsule_click_top".equals(key)
+        return "keep_paused_music".equals(key) || "media_card_in_shade".equals(key) || "realtime_media_wave".equals(key) || "block_capsule_click_top".equals(key)
                 || "camera_card_expansion".equals(key) || "unbind_status_bar".equals(key)
-                || List.of("hide_capsule_stroke","hide_capsule_arrows","skip_empty_capsule","card_dim_enabled",
+                || List.of("hide_capsule_stroke","hide_capsule_arrows","capsule_keep_in_foreground","skip_empty_capsule","card_dim_enabled",
                         "capsule_corners_enabled","card_corners_enabled","capsule_size_enabled","selected_card_first").contains(key)
                 || Boolean.TRUE.equals(values.get("unbind_status_bar"));
     }
@@ -188,6 +200,7 @@ public final class SettingsCatalog {
         new Group("control_center", "控制中心", "磁贴纵向展开、整页滚动与横屏分页过渡", List.of(
             flag("磁贴布局","vertical_portrait","竖屏磁贴纵向展开","把下方分页磁贴接成连续行，上下滑动整个控制中心；滚动到底后再次上滑，或从屏幕底部上滑可收起。进入编辑时暂时恢复原厂布局。"),
             flag("磁贴布局","vertical_landscape","横屏磁贴纵向展开","保留原生分栏，将右侧磁贴向下展开并纵向滚动。底部上滑可收起，编辑模式保持原厂处理。"),
+            flag("滑动触感","edge_haptics","滚动到边界时震动","仅磁贴纵向展开时生效。拖动或惯性滑动到顶部、底部时使用系统列表触感；回弹不重复震动，跟随系统触感设置。"),
             new Item("分页过渡","fade_landscape","横屏分页边缘渐隐","在原厂左右翻页时，让分页外侧的越界磁贴渐变淡出；静止时不遮挡正常磁贴，外侧范围按相邻控件间距限制。",false,
                     null,0,0,0,1,1,"",new Visibility("vertical_landscape",false),null)
         )),

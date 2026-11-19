@@ -23,6 +23,7 @@ public final class MigrationProtocol {
         if(catalog==null)return false;
         if("enabled".equals(key))return true;
         if("cloud".equals(group) && dev.lsposed.fluidcloud.MediaWaveBands.KEY.equals(key))return true;
+        if("cloud".equals(group) && dev.howard.colorosenhance.notifications.NotificationCloudRules.KEY.equals(key))return true;
         if("installer".equals(group) && "target_package".equals(key))return true;
         for(var item:catalog.items())if(item.key().equals(key) || item.adjustable() && item.valueKey().equals(key))return true;
         return false;

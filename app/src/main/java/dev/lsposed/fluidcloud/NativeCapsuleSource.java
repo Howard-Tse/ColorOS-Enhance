@@ -34,6 +34,10 @@ final class NativeCapsuleSource {
     boolean independentHostPresentation;
     private final Matrix toWindow = new Matrix();
     private final Matrix toHost = new Matrix();
+    private final Matrix mapped = new Matrix();
+    private final List<View> transformPath = new ArrayList<>();
+    private final int[] screenLocation = new int[2], windowLocation = new int[2];
+    private int offsetX, offsetY;
     private final Region touchable = new Region();
     private final Region recovery = new Region();
     private int recoveryWidth,recoveryHeight;
@@ -108,6 +112,7 @@ final class NativeCapsuleSource {
                     View.MeasureSpec.makeMeasureSpec(b - t, View.MeasureSpec.EXACTLY));
             host.layout(l, t, r, b);
         }
+        captureWindowOffset(window);
         toWindow.set(matrixInWindow(host, window));
         if (!toWindow.invert(toHost)) {
             recovery.setEmpty();
@@ -204,35 +209,39 @@ final class NativeCapsuleSource {
     }
 
     private Matrix matrixInWindow(View view, View window) {
-        Matrix result = new Matrix();
+        mapped.reset();
         if (independentPlacement) {
-            int[] sourceOrigin = windowOrigin(host);
-            int[] destinationOrigin = windowOrigin(window);
-            result.preTranslate(sourceOrigin[0] - destinationOrigin[0], sourceOrigin[1] - destinationOrigin[1]);
-            List<View> path = new ArrayList<>();
-            for (View current = view; current != null; current = parent(current)) path.add(current);
+            mapped.setTranslate(offsetX, offsetY);
+            for (View current = view; current != null; current = parent(current)) transformPath.add(current);
             boolean nativeContent = false;
-            for (int i = path.size() - 1; i >= 0; i--) {
-                View current = path.get(i);
-                View p = parent(current);
-                result.preTranslate(current.getLeft() - (p == null ? 0 : p.getScrollX()),
-                        current.getTop() - (p == null ? 0 : p.getScrollY()));
-                nativeContent |= current == host;
-                if (nativeContent && !(current == host && independentHostPresentation)) result.preConcat(current.getMatrix());
-            }
-            return result;
+            try {
+                for (int i = transformPath.size() - 1; i >= 0; i--) {
+                    View current = transformPath.get(i);
+                    View p = parent(current);
+                    mapped.preTranslate(current.getLeft() - (p == null ? 0 : p.getScrollX()),
+                            current.getTop() - (p == null ? 0 : p.getScrollY()));
+                    nativeContent |= current == host;
+                    if (nativeContent && !(current == host && independentHostPresentation)) mapped.preConcat(current.getMatrix());
+                }
+            } finally { transformPath.clear(); }
+        } else {
+            view.transformMatrixToGlobal(mapped);
+            window.transformMatrixToLocal(mapped);
         }
-        view.transformMatrixToGlobal(result);
-        window.transformMatrixToLocal(result);
-        return result;
+        return mapped;
     }
 
-    private static int[] windowOrigin(View view) {
-        int[] screen = new int[2], local = new int[2];
-        View root = view.getRootView();
-        root.getLocationOnScreen(screen);
-        root.getLocationInWindow(local);
-        return new int[]{screen[0] - local[0], screen[1] - local[1]};
+    private void captureWindowOffset(View window) {
+        if (!independentPlacement) return;
+        View sourceRoot = host.getRootView(), targetRoot = window.getRootView();
+        sourceRoot.getLocationOnScreen(screenLocation);
+        sourceRoot.getLocationInWindow(windowLocation);
+        offsetX = screenLocation[0] - windowLocation[0];
+        offsetY = screenLocation[1] - windowLocation[1];
+        targetRoot.getLocationOnScreen(screenLocation);
+        targetRoot.getLocationInWindow(windowLocation);
+        offsetX -= screenLocation[0] - windowLocation[0];
+        offsetY -= screenLocation[1] - windowLocation[1];
     }
 
     private static RectF paddingBounds(View view) {
@@ -295,6 +304,7 @@ final class NativeCapsuleSource {
                 float height=bottom.floatValue()-top.floatValue();
                 if(height>0 && height<=capsule.getMeasuredHeight()*2){
                     dot=new RectF((container.getWidth()-height)/2,top.floatValue(),(container.getWidth()+height)/2,bottom.floatValue());
+                    captureWindowOffset(window);
                     matrixInWindow(container,window).mapRect(dot);
                 }
             }
@@ -335,6 +345,7 @@ final class NativeCapsuleSource {
             Skin skin=skins.computeIfAbsent(capsule,Skin::new);skin.refresh(capsule);
             if(skin.originalBackground!=null && skin.background==null || skin.originalForeground!=null && skin.foreground==null)return false;
         }
+        captureWindowOffset(window);
         for(View capsule:capsules){
             Skin skin=skins.get(capsule);
             skin.drawShape(canvas,capsule,geometry.bounds(),false,radius);
@@ -365,7 +376,10 @@ final class NativeCapsuleSource {
         return true;
     }
     void drawMorphDecorations(Canvas canvas,View window,CapsulePresentationGeometry.Geometry geometry){
-        if(!capsules.isEmpty())drawMoons(canvas,window,capsules.getFirst(),geometry);
+        if(!capsules.isEmpty()){
+            captureWindowOffset(window);
+            drawMoons(canvas,window,capsules.getFirst(),geometry);
+        }
     }
     private void drawMoons(Canvas canvas,View window,View capsule,CapsulePresentationGeometry.Geometry geometry){
         View parent=parent(capsule);if(parent==null)return;
@@ -410,6 +424,7 @@ final class NativeCapsuleSource {
     int viewportHeight(View window, int screenHeight) {
         if (host.getWidth() <= 0 || host.getHeight() <= 0 || !host.isAttachedToWindow()) return Math.max(1, screenHeight);
         RectF bounds = new RectF(0, 0, host.getWidth(), host.getHeight());
+        captureWindowOffset(window);
         matrixInWindow(host, window).mapRect(bounds);
         int quantum = Math.max(1, Math.round(host.getResources().getDisplayMetrics().density * 16));
         return viewportHeight(bounds, screenHeight, quantum);

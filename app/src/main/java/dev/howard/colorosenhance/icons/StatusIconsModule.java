@@ -1,5 +1,8 @@
 package dev.howard.colorosenhance.icons;
 
+import dev.howard.colorosenhance.diagnostics.DiagnosticPoint;
+import dev.howard.colorosenhance.diagnostics.DiagnosticReporter;
+
 import android.content.SharedPreferences;
 import android.graphics.Canvas;
 import android.os.Handler;
@@ -42,7 +45,7 @@ public final class StatusIconsModule extends XposedModule {
             listener = (prefs, key) -> reload();
             preferences.registerOnSharedPreferenceChangeListener(listener);
             reload();
-        } catch (RuntimeException unavailable) { warn("配置通道", unavailable); return; }
+        } catch (RuntimeException unavailable) { warn("配置通道", unavailable); DiagnosticReporter.report(DiagnosticPoint.ICONS, DiagnosticPoint.State.UNSUPPORTED); return; }
         ClassLoader loader = param.getClassLoader();
         installOrdering(loader);
         installSeamless(loader);
@@ -52,6 +55,7 @@ public final class StatusIconsModule extends XposedModule {
         installPanelClock(loader);
         installBluetooth(loader);
         installSpecials(loader);
+        synchronized (warned) { DiagnosticReporter.report(DiagnosticPoint.ICONS, warned.isEmpty() ? DiagnosticPoint.State.INSTALLED : DiagnosticPoint.State.PARTIAL); }
     }
     private void reload() {
         StatusIconConfig previous=config;
@@ -377,6 +381,7 @@ public final class StatusIconsModule extends XposedModule {
     }
     private void warn(String part, Throwable error) {
         synchronized (warned) { if (!warned.add(part)) return; }
+        DiagnosticReporter.report(DiagnosticPoint.ICONS, DiagnosticPoint.State.PARTIAL);
         log(Log.WARN, "StatusIcons", part + "不匹配，保留对应系统处理", error);
     }
 }

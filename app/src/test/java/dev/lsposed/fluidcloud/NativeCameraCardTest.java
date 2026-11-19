@@ -2,7 +2,12 @@ package dev.lsposed.fluidcloud;
 
 import android.app.Activity;
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Outline;
 import android.graphics.Rect;
+import android.graphics.drawable.GradientDrawable;
 import android.view.View;
 import android.widget.FrameLayout;
 import java.util.List;
@@ -633,6 +638,69 @@ public class NativeCameraCardTest {
         assertEquals(0,morph.translationY(),0);assertEquals(new Rect(0,0,1160,642),morph.mask());
         assertNull(NativeCameraCard.morph(new Rect(),new Rect(598,31,672,136),1,1,321,3,28,1160,642));
         assertNull(NativeCameraCard.morph(new Rect(0,0,100,100),new Rect(598,31,672,136),0,0,321,3,28,1160,642));
+    }
+    @Test @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    public void regularCardContourIsClippedDuringCollapseAndReturnsOnReopen() throws Exception {
+        var context = Robolectric.buildActivity(Activity.class).setup().get();
+        var root = new Root(context);
+        root.h.set(460, 25, 540, 115);
+        var list = new Container(context);
+        root.addView(list);
+        var card = templateCard(context);
+        list.addView(card);
+        var page = (FrameLayout) ((FrameLayout) card.i).getChildAt(0);
+        var stroke = new GradientDrawable();
+        stroke.setColor(0xff234567);
+        stroke.setStroke(4, Color.RED);
+        page.getChildAt(2).setBackground(stroke);
+        var contract = contract(false);
+        list.setTranslationY(200);
+        contract.afterNativeLayout(list, true);
+        card.measure(View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        card.layout(0, 14, 1000, 14 + card.getMeasuredHeight());
+        contract.beforeDraw(card, true);
+        CameraMaterialSurface surface = null;
+        for (int i = 0; i < card.getChildCount(); i++) {
+            if (card.getChildAt(i) instanceof CameraMaterialSurface material) surface = material;
+        }
+        assertNotNull(surface);
+        int centerY = card.getHeight() / 2;
+        var image = Bitmap.createBitmap(card.getWidth(), card.getHeight(), Bitmap.Config.ARGB_8888);
+        var canvas = new Canvas(image);
+        surface.draw(canvas);
+        assertEquals(Color.RED, image.getPixel(2, centerY));
+
+        card.setScaleX(.4f);
+        card.setScaleY(.4f);
+        var collapsed = new OutlineProvider(new Rect(300, centerY - 110, 700, centerY + 110));
+        card.setOutlineProvider(collapsed);
+        contract.beforeOutline(collapsed, card, true);
+        contract.align(card, true);
+        var outline = new Outline();
+        surface.getOutlineProvider().getOutline(surface, outline);
+        var clip = new Rect();
+        assertTrue(outline.getRect(clip));
+        assertEquals(collapsed.a, clip);
+        image.eraseColor(Color.TRANSPARENT);
+        int saved = canvas.save();
+        canvas.clipRect(clip);
+        surface.draw(canvas);
+        canvas.restoreToCount(saved);
+        assertEquals("The capsule edge must not pick up the card's stroke",
+                image.getPixel(clip.centerX(), centerY), image.getPixel(clip.left + 2, centerY));
+        assertEquals(new Rect(0, 0, card.getWidth(), card.getHeight()), stroke.getBounds());
+
+        card.setScaleX(1f);
+        card.setScaleY(1f);
+        var reopened = new OutlineProvider(new Rect(0, 0, card.getWidth(), card.getHeight()));
+        card.setOutlineProvider(reopened);
+        contract.beforeOutline(reopened, card, true);
+        contract.align(card, true);
+        image.eraseColor(Color.TRANSPARENT);
+        surface.draw(canvas);
+        assertEquals(Color.RED, image.getPixel(2, centerY));
+        contract.restore();
     }
     @Test public void liveMorphSharesBlurOutlineBoundsAndStopsWhenDisabledOrMovedToAnotherSlot() throws Exception {
         var context=Robolectric.buildActivity(Activity.class).setup().get();var root=new Root(context);

@@ -308,6 +308,26 @@ public class ControlCenterScrollTest {
             scroll.reset();
         }finally{owner.pause().stop().destroy();}
     }
+    @Test public void edgeFeedbackUsesNativeListHapticAndSkipsPassiveReboundAndReset(){
+        var owner=Robolectric.buildActivity(Activity.class).setup().visible();
+        try {
+            var root=new HapticRoot(owner.get());root.addView(new FrameLayout(owner.get()),new FrameLayout.LayoutParams(1000,1800));owner.get().setContentView(root);
+            root.measure(exact(1000),exact(600));root.layout(0,0,1000,600);boolean[] enabled={true};
+            var scroll=new ControlCenterScroller(root,ignored->{},()->enabled[0]);scroll.resize(1200);
+            begin(scroll,800,200);assertTrue(intercept(scroll,800,400));touch(scroll,800,400,MotionEvent.ACTION_MOVE);
+            touch(scroll,800,450,MotionEvent.ACTION_MOVE);assertEquals(java.util.List.of(307),root.feedback);
+            touch(scroll,800,450,MotionEvent.ACTION_CANCEL);
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(2));
+            assertEquals(java.util.List.of(307),root.feedback);scroll.reset();
+            enabled[0]=false;begin(scroll,800,200);assertTrue(intercept(scroll,800,400));touch(scroll,800,400,MotionEvent.ACTION_MOVE);
+            assertEquals(java.util.List.of(307),root.feedback);scroll.close();
+        }finally{owner.pause().stop().destroy();}
+    }
+    private static final class HapticRoot extends FrameLayout {
+        final java.util.List<Integer> feedback=new java.util.ArrayList<>();
+        HapticRoot(android.content.Context context){super(context);}
+        @Override public boolean performHapticFeedback(int effect){feedback.add(effect);return true;}
+    }
     private int exact(int size){return View.MeasureSpec.makeMeasureSpec(size,View.MeasureSpec.EXACTLY);}
     private void begin(ControlCenterScroller view,float x,float y){MotionEvent event=MotionEvent.obtain(0,0,MotionEvent.ACTION_DOWN,x,y,0);try{view.begin(event);}finally{event.recycle();}}
     private boolean intercept(ControlCenterScroller view,float x,float y){MotionEvent event=MotionEvent.obtain(0,100,MotionEvent.ACTION_MOVE,x,y,0);try{return view.intercept(event);}finally{event.recycle();}}

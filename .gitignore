@@ -35,4 +35,5 @@ __pycache__/
 !/docs/PUBLISHING.md
 !/docs/PRIVACY.md
 !/docs/MIGRATION.md
+!/docs/NOTIFICATION_CLOUD.md
 /design/

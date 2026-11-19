@@ -1,5 +1,8 @@
 package dev.howard.aodenhance.wallpaper;
 
+import dev.howard.colorosenhance.diagnostics.DiagnosticPoint;
+import dev.howard.colorosenhance.diagnostics.DiagnosticReporter;
+
 import android.content.SharedPreferences;
 import android.os.Build;
 import android.util.Log;
@@ -88,6 +91,7 @@ public final class WallpaperModule extends XposedModule {
             installed.add(hook(contract.destroy).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain->{
                 adapter.forget(chain.getThisObject());return chain.proceed();
             }));
+            DiagnosticReporter.report(DiagnosticPoint.WALLPAPER, DiagnosticPoint.State.INSTALLED);
             log(Log.INFO,"AodWallpaper","独立背景 RGB 压暗合同已加载；时钟、背景纹理和透明度保持原厂处理");
         } catch(ReflectiveOperationException|RuntimeException|LinkageError failure) {
             for(var handle:installed)handle.unhook();
@@ -99,6 +103,9 @@ public final class WallpaperModule extends XposedModule {
         if(adapter!=null)adapter.refresh();
     }
     private void warn(Throwable failure) {
-        if(warned.compareAndSet(false,true))log(Log.WARN,"AodWallpaper","背景节点合同未匹配或不可用；未完成的压暗保留系统处理",failure);
+        if(warned.compareAndSet(false,true)){
+            DiagnosticReporter.report(DiagnosticPoint.WALLPAPER, DiagnosticPoint.State.FAILED);
+            log(Log.WARN,"AodWallpaper","背景节点合同未匹配或不可用；未完成的压暗保留系统处理",failure);
+        }
     }
 }

@@ -1,6 +1,7 @@
 package dev.lsposed.fluidcloud;
 
 import android.app.KeyguardManager;
+import dev.howard.colorosenhance.diagnostics.DiagnosticPoint;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -244,6 +245,7 @@ final class MediaWaveFeature {
             if (!java.util.Objects.equals(next, request)) {
                 request=next;
                 if (next != null) {
+                    module.report(DiagnosticPoint.MEDIA_WAVE_CAPTURE, DiagnosticPoint.State.WAITING);
                     envelope.captureStarting();
                     stopFrames();
                     ensureRun();
@@ -280,6 +282,7 @@ final class MediaWaveFeature {
             if(playback()!=null){changed();return;}
             // A short handoff may have no track. Persistent ambiguity/capture restrictions
             // must still fall back instead of leaving a frozen imitation of live audio.
+            module.report(DiagnosticPoint.MEDIA_WAVE_CAPTURE, DiagnosticPoint.State.NATIVE);
             continuity.fallback();stopOutput();
         }catch(RuntimeException|LinkageError error){unavailable("Media waveform track unavailable");}
     }
@@ -317,13 +320,17 @@ final class MediaWaveFeature {
         }
     }
     private void fallback(Run source,long ticket,String reason){
-        if(run==source && ticket==source.loop.generation()){continuity.fallback();stopOutput();module.info("Realtime media waveform fallback: "+reason);}
+        if(run==source && ticket==source.loop.generation()){
+            module.report(DiagnosticPoint.MEDIA_WAVE_CAPTURE,DiagnosticPoint.State.NATIVE);
+            continuity.fallback();stopOutput();module.info("Realtime media waveform fallback: "+reason);
+        }
     }
     private void accept(Run source,long ticket,MediaWaveLevels levels){
         if(run!=source || !enabled || !playing || !screenReady || !cards.isEmpty()
                 || ticket!=source.loop.generation() || request==null)return;
         if(android.util.Log.isLoggable("COSMediaWave",android.util.Log.DEBUG))trace.sample(SystemClock.uptimeMillis(),levels);
         envelope.sample(levels);
+        if (!continuity.custom()) module.report(DiagnosticPoint.MEDIA_WAVE_CAPTURE, DiagnosticPoint.State.ACTIVE);
         continuity.sampled();
         if(!rendering){
             rendering=true;
