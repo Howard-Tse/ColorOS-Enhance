@@ -25,16 +25,19 @@ final class NativeCardDim implements View.OnAttachStateChangeListener {
     private boolean enabled;
     private int percent;
     NativeCardDim(NativeCapsuleAppearance.Lookup lookup)throws ReflectiveOperationException{
+        cardType=lookup.load(NativeCameraCard.VIEWS+"CardView");
+        boolean alternate=ColorOs16Plugin.cards(cardType);
         Class<?> window,view;boolean legacy;
-        try{window=lookup.load("com.oplus.systemui.plugins.seedling.card.window.i");view=lookup.load(NativeCameraCard.VIEWS+"e");legacy=false;}
+        if (alternate) { window=lookup.load(ColorOs16Plugin.CARD_WINDOW);view=lookup.load(ColorOs16Plugin.CARD_ROOT);legacy=true; }
+        else try{window=lookup.load("com.oplus.systemui.plugins.seedling.card.window.i");view=lookup.load(NativeCameraCard.VIEWS+"e");legacy=false;}
         catch(ClassNotFoundException missing){window=lookup.load("l5.h");view=lookup.load("i5.d");legacy=true;}
         if(!FrameLayout.class.isAssignableFrom(view))throw new NoSuchMethodException("Card root type");
-        root=Reflect.field(window,legacy?"f":"g",view);anchor=Reflect.field(view,legacy?"s":"h",Rect.class);
-        cardType=lookup.load(NativeCameraCard.VIEWS+"CardView");
+        root=Reflect.field(window,legacy?"f":"g",view);
+        anchor=Reflect.field(view,alternate?"r":legacy?"s":"h",Rect.class);
         Class<?> list=lookup.load(NativeCameraCard.VIEWS+"CardContainer"),capsule=lookup.load(NativeCameraCard.VIEWS+"InstantContainer");
         cards=Reflect.method(view,"getCardContainer",list);instant=Reflect.method(view,"getInstantContainer",capsule);
         currentInstant=Reflect.method(capsule,"getInstantView",View.class);expandedInstant=Reflect.method(capsule,"l",boolean.class);
-        Class<?> outline=lookup.load(legacy?"j6.h":"com.oplus.systemui.plugins.common.util.j");
+        Class<?> outline=lookup.load(alternate?ColorOs16Plugin.CARD_OUTLINE:legacy?"j6.h":"com.oplus.systemui.plugins.common.util.j");
         outlineType=android.view.ViewOutlineProvider.class.isAssignableFrom(outline)?outline:PluginClasses.outline(cardType);
         Field outlineMask;
         try{outlineMask=Reflect.field(outlineType,legacy?"c":"a",Rect.class);}

@@ -237,8 +237,8 @@ private fun SettingsApp(activity: MainActivity, route: String, update: Int) {
         }
         if (launchRelease != null) WindowDialog(show = true, title = "发现新版本 ${launchRelease.versionName()}",
             summary = "当前版本 ${BuildConfig.VERSION_NAME}", onDismissRequest = { app.launchUpdates().dismiss() }) {
-            if (launchRelease.notes().isNotBlank()) Column(Modifier.heightIn(max = 320.dp).verticalScrollCompat()) {
-                Text(launchRelease.notes(), Modifier.padding(top = 12.dp), fontSize = 14.sp)
+            if (launchRelease.hasNotes()) Column(Modifier.heightIn(max = 320.dp).verticalScrollCompat()) {
+                dev.howard.colorosenhance.updates.ReleaseNotesText(launchRelease, Modifier.padding(top = 12.dp))
             }
             Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 TextButton("稍后", { app.launchUpdates().dismiss() }, Modifier.weight(1f))
@@ -374,7 +374,7 @@ private fun Management(app: EnhanceApplication, controller: SettingsUiController
         }
         item("restart_help") { Text("SIM PIN 开机验证和安装器替换首次加载需要整机重启，作用域重启不能代替。", Modifier.padding(horizontal = 10.dp), fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary) }
         item("diagnostics") { Card(Modifier.fillMaxWidth()) {
-            NavigationRow("模块状态", "检查关键 Hook、作用域与回退记录，保存诊断日志", {
+            NavigationRow("模块状态", "查看固件版本、Hook 状态与回退记录，保存诊断包", {
                 dev.howard.colorosenhance.diagnostics.DiagnosticLinks.open(activity)
             })
         } }
@@ -403,14 +403,16 @@ private fun FeaturePage(activity: MainActivity, app: EnhanceApplication, page: S
     val allItems = remember(page.route()) { SettingsLayout.items(activity, page.route()) }
     var filter by rememberSaveable { mutableStateOf("") }
     val visibleItems = allItems.filter { it.visible(state.values()) && (filter.isBlank() || (it.title() + it.description()).contains(filter, true)) }
-    val sections = visibleItems.groupBy { it.section() }
+    val sceneSetup = visibleItems.filter(SettingsLayout::isSceneSetupItem)
+    val sections = visibleItems.filterNot(SettingsLayout::isSceneSetupItem).groupBy { it.section() }
+    val scenePage = page.route() == "cloud_scenes"
     val children = SettingsLayout.children(page.route()).filter {
         it.route() != "sim_slots" && it.route() != "cloud_notification_apps"
                 && (it.route() != "cloud_landscape" || state.values()["landscape_follow_portrait"] != true)
     }
     val listState = rememberLazyListState()
     LazyColumn(modifier, state = listState, contentPadding = PaddingValues(20.dp, 8.dp, 20.dp, 32.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (page.demo().isNotBlank()) item("demo:${page.route()}") { DemoCard(page, state.values()) }
+        if (!scenePage && page.demo().isNotBlank()) item("demo:${page.route()}") { DemoCard(page, state.values()) }
         if (page.route() == page.group()) item("master") {
             Card(Modifier.fillMaxWidth()) {
                 SwitchPreference(state.values()["enabled"] == true, { onStatus(controller.toggle(page.group(), "enabled", it)) },
@@ -424,11 +426,15 @@ private fun FeaturePage(activity: MainActivity, app: EnhanceApplication, page: S
             Text(if (state.revision() < 0) "配置服务未连接，当前仅供查看。" else "保存状态未确认，已暂停修改。请重新连接配置服务后重试。",
                 Modifier.padding(horizontal = 10.dp), fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
         }
-        if (children.isNotEmpty()) item("subpages") {
+        if (sceneSetup.isNotEmpty() || children.isNotEmpty()) item("subpages") {
             Card(Modifier.fillMaxWidth()) {
+                sceneSetup.forEach { item ->
+                    key(item.key()) { SettingItem(page.group(), item, state, controller, onModal, onStatus) }
+                }
                 children.forEach { child -> NavigationRow(child.title(), child.summary(), { open(child.route()) }) }
             }
         }
+        if (scenePage && page.demo().isNotBlank()) item("demo:${page.route()}") { DemoCard(page, state.values()) }
         if (page.route() == "icons") item("icon_actions") {
             Card(Modifier.fillMaxWidth()) {
                 val config = StatusIconConfig.from(state.values())
@@ -517,8 +523,8 @@ private fun FeaturePage(activity: MainActivity, app: EnhanceApplication, page: S
             }
         }
         if (page.route() == "installer") item("installer_help") { Text(SettingsCatalog.INSTALLER_HELP, Modifier.padding(10.dp), fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary) }
-        if (page.route() == "cloud_scenes") item("scene_help") {
-            Text("保持显示优先于动画补全；两项关闭时跟随系统。更改解绑总开关后，请按说明重启系统界面。锁屏、息屏、隐私状态与迷你胶囊保持系统处理。", Modifier.padding(10.dp), fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+        if (scenePage) item("scene_help") {
+            Text("保持显示优先于动画补全。锁屏、息屏、隐私状态与迷你胶囊保持系统处理。", Modifier.padding(10.dp), fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
         }
         if (page.route() == page.group() && page.group() != "sim") item("reset") {
             Spacer(Modifier.height(10.dp))

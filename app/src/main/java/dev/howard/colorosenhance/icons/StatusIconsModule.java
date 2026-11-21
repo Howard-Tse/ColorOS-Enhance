@@ -71,7 +71,7 @@ public final class StatusIconsModule extends XposedModule {
             Method update=IconReflection.method(container,"updateStates");
             Method apply=IconReflection.method(state,"applyToView",View.class);
             Method setX=IconReflection.method(state,"setXTranslation",float.class);
-            Method setAlpha=IconReflection.method(state,"setAlpha",float.class,String.class);
+            Method setAlpha=IconReflection.alphaSetter(state);
             var visible=state.getDeclaredField("visibleState");visible.setAccessible(true);
             var adapter=new HomeIconOrder(()->config,update,error->warn("自定义图标排序",error));
             hook(apply).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain->{
@@ -82,7 +82,7 @@ public final class StatusIconsModule extends XposedModule {
                             visible.setInt(chain.getThisObject(),target.visible()?0:2);
                             if(target.visible()){
                                 setX.invoke(chain.getThisObject(),target.x());
-                                setAlpha.invoke(chain.getThisObject(),1f,"ColorOS Enhance icon order");
+                                IconReflection.applyOrderAlpha(setAlpha,chain.getThisObject());
                             }
                         }
                     }catch(ReflectiveOperationException|RuntimeException error){warn("排序动画状态",error);}

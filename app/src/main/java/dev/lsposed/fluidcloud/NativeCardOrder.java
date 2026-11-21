@@ -57,8 +57,9 @@ final class NativeCardOrder {
             throws ReflectiveOperationException {
         Class<?> container = lookup.load(NativeCameraCard.VIEWS + "CardContainer");
         capsuleContainer = lookup.load(NativeCapsuleAppearance.VIEWS + "CapsuleContainer");
-        selectedKey = Reflect.field(capsuleContainer, legacy ? "w" : "l", String.class);
-        contentState = Reflect.field(capsuleContainer, legacy ? "x" : "m", Enum.class);
+        boolean alternate = legacy && ColorOs16Plugin.capsule(capsuleContainer);
+        selectedKey = Reflect.field(capsuleContainer, alternate ? "u" : legacy ? "w" : "l", String.class);
+        contentState = Reflect.field(capsuleContainer, alternate ? "v" : legacy ? "x" : "m", Enum.class);
         viewModel=Reflect.uniqueField(container,field->field.getDeclaringClass()==container && Reflect.instance(field)
                 && NativeCardLaunch.find(field.getType()).isPresent());
         launch=NativeCardLaunch.find(viewModel.getType()).orElseThrow(()->new NoSuchMethodException("Native card launch entry"));

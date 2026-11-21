@@ -59,6 +59,44 @@ public class NativeCapsuleAppearanceTest {
             assertEquals(View.GONE,view.left.getVisibility());
         }
     }
+    @Test public void increasingRadiusPastHalfHeightStillChangesTheEnds() {
+        var stock = new GradientDrawable();
+        stock.setColor(Color.BLACK);
+        assertEquals(Color.BLACK, render(new CapsuleChromeDrawable(stock, 14, false)).getPixel(7, 2));
+        assertEquals(Color.TRANSPARENT, render(new CapsuleChromeDrawable(stock, 24, false)).getPixel(7, 2));
+    }
+
+    @Test public void continuousStrokeStaysInsideTheFillContourAndMorphCopiesKeepItsColor() {
+        var stockFill = new GradientDrawable();
+        stockFill.setColor(Color.BLACK);
+        var stockStroke = new GradientDrawable();
+        stockStroke.setColor(Color.TRANSPARENT);
+        var fill = new CapsuleChromeDrawable(stockFill, 24, true);
+        var stroke = new CapsuleChromeDrawable(stockStroke, 24, true);
+        stroke.setStroke(2, Color.GRAY);
+        var copy = stroke.copy();
+        copy.syncStroke(stroke);
+        Bitmap fillImage = render(fill);
+        Bitmap strokeImage = render(copy);
+        assertEquals(Color.GRAY, strokeImage.getPixel(50, 0));
+        assertEquals(Color.TRANSPARENT, strokeImage.getPixel(50, 14));
+        for (int y = 0; y < fillImage.getHeight(); y++) {
+            for (int x = 0; x < fillImage.getWidth(); x++) {
+                if (Color.alpha(fillImage.getPixel(x, y)) == 0)
+                    assertEquals(Color.TRANSPARENT, strokeImage.getPixel(x, y));
+            }
+        }
+        stroke.setStroke(0, Color.GRAY);
+        copy.syncStroke(stroke);
+        assertEquals(Color.TRANSPARENT, render(copy).getPixel(50, 0));
+    }
+
+    private static Bitmap render(GradientDrawable drawable) {
+        var image = Bitmap.createBitmap(100, 28, Bitmap.Config.ARGB_8888);
+        drawable.setBounds(0, 0, image.getWidth(), image.getHeight());
+        drawable.draw(new Canvas(image));
+        return image;
+    }
     private Context context(){return RuntimeEnvironment.getApplication();}
     private static GradientDrawable foreground(){var g=new GradientDrawable();g.setColor(Color.WHITE);g.setBounds(0,0,100,60);return g;}
     private static int edge(GradientDrawable drawable){var image=Bitmap.createBitmap(100,60,Bitmap.Config.ARGB_8888);drawable.draw(new Canvas(image));return image.getPixel(50,1);}

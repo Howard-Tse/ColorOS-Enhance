@@ -7,7 +7,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 /** Accept only the public module repository's stable release and its matching APK. */
-public record ReleaseInfo(long versionCode, String versionName, String notes, String pageUrl, String apkUrl) {
+public record ReleaseInfo(long versionCode, String versionName, String notes, String notesHtml, String pageUrl, String apkUrl) {
     public static final String SOURCE_URL = "https://github.com/Howard-Tse/ColorOS-Enhance";
     public static final String MODULE_URL = "https://github.com/Xposed-Modules-Repo/io.github.howard_tse.colorosenhance";
     public static final String RELEASES_URL = MODULE_URL + "/releases";
@@ -16,6 +16,7 @@ public record ReleaseInfo(long versionCode, String versionName, String notes, St
     private static final Pattern TAG = Pattern.compile("([1-9][0-9]{0,9})-([0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?)");
 
     public boolean newerThan(long installedCode) { return versionCode > installedCode; }
+    public boolean hasNotes() { return !notes.isBlank() || !notesHtml.isBlank(); }
 
     public static ReleaseInfo parse(String json) throws JSONException {
         JSONObject release = new JSONObject(json);
@@ -40,9 +41,19 @@ public record ReleaseInfo(long versionCode, String versionName, String notes, St
             if (githubPath(url, PATH + "download/" + tag + "/" + apkName)) apk = url;
         }
         if (apk == null) throw new JSONException("Release APK unavailable");
-        String notes = release.optString("body", "");
-        if (notes.length() > 20000) notes = notes.substring(0, 20000) + "\n…完整说明请查看发布页。";
-        return new ReleaseInfo(code, name, notes, page, apk);
+        String notes = release.isNull("body") ? "" : release.optString("body", "");
+        String html = release.isNull("body_html") ? "" : release.optString("body_html", "");
+        if (notes.length() > 20_000) notes = notes.substring(0, 20_000) + "\n…完整说明请查看发布页。";
+        if (html.length() > 80_000) html = ""; // Keep complete tags or display the limited plain-text fallback.
+        return new ReleaseInfo(code, name, notes, html, page, apk);
+    }
+
+    String notesLink(String target) {
+        try {
+            URI link = URI.create(pageUrl).resolve(target);
+            return "https".equalsIgnoreCase(link.getScheme()) && link.getHost() != null && link.getRawUserInfo() == null
+                    ? link.toString() : null;
+        } catch (IllegalArgumentException invalid) { return null; }
     }
 
     private static boolean githubPath(String url, String expectedPath) {

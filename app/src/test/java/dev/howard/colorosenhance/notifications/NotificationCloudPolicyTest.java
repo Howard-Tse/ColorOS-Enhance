@@ -41,4 +41,9 @@ public class NotificationCloudPolicyTest {
         assertEquals(NotificationCloudRules.Mode.NATIVE, evaluate(notification("test.app", Notification.CATEGORY_MESSAGE), 0, 0, false));
         assertEquals(NotificationCloudRules.Mode.NATIVE, evaluate(notification("other.app", Notification.CATEGORY_MESSAGE), 3, 3, false));
     }
+    @Test public void existingLegacyLiveAlertsStayInTheOriginalPipeline() throws Exception {
+        var sbn = notification("test.app", Notification.CATEGORY_MESSAGE);
+        sbn.getNotification().extras.putString("oplusLiveAlertOptions", "{\"remindType\":11}");
+        assertEquals(NotificationCloudRules.Mode.NATIVE, evaluate(sbn, 4, 4, false));
+    }
 }

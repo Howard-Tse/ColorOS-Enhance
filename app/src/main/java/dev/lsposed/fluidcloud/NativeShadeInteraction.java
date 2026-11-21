@@ -28,8 +28,12 @@ final class NativeShadeInteraction {
     NativeShadeInteraction(Lookup lookup)throws ReflectiveOperationException{
         rootType=lookup.load(VIEWS+"CapsuleContainerRoot");
         containerType=lookup.load(VIEWS+"CapsuleContainer");
+        boolean alternate = ColorOs16Plugin.capsule(containerType);
         Class<?> selected;boolean older;
-        try{
+        if (alternate) {
+            selected=lookup.load(ColorOs16Plugin.CAPSULE_MODEL);
+            older=true;
+        } else try{
             selected=lookup.load("com.oplus.systemui.plugins.seedling.capsule.ui.viewmodel.u");older=false;
             Class<?> event=lookup.load("com.oplus.systemui.plugins.seedling.capsule.ui.model.a").getSuperclass();
             if(!PluginClasses.has(selected,void.class,event)){
@@ -42,17 +46,17 @@ final class NativeShadeInteraction {
         catch(ClassNotFoundException old){selected=lookup.load("a5.q");older=true;}
         Class<?> modelType=selected;
         legacy=older;
-        clickType=lookup.load(legacy?"y4.a":"com.oplus.systemui.plugins.seedling.capsule.ui.model.a");
-        Class<?> state=lookup.load(legacy?"com.oplus.systemui.plugins.seedling.state.n":"com.oplus.systemui.plugins.seedling.state.q");
-        Class<?> cache=lookup.load(legacy?"g4.i":"com.oplus.systemui.plugins.baseservice.g");
-        Class<?> content=lookup.load(legacy?"v4.e":"com.oplus.systemui.plugins.seedling.capsule.data.model.ContentState");
+        clickType=lookup.load(alternate?"k4.a":legacy?"y4.a":"com.oplus.systemui.plugins.seedling.capsule.ui.model.a");
+        Class<?> state=lookup.load("com.oplus.systemui.plugins.seedling.state."+(alternate?"m":legacy?"n":"q"));
+        Class<?> cache=lookup.load(alternate?"q3.i":legacy?"g4.i":"com.oplus.systemui.plugins.baseservice.g");
+        Class<?> content=lookup.load(alternate?ColorOs16Plugin.CAPSULE_STATE:legacy?"v4.e":"com.oplus.systemui.plugins.seedling.capsule.data.model.ContentState");
         touch=Reflect.method(rootType,"onTouchEvent",boolean.class,MotionEvent.class);
         Method dispatch;
         try{dispatch=Reflect.method(modelType,legacy?"j":"k",void.class,clickType.getSuperclass());}
         catch(NoSuchMethodException missing){dispatch=Reflect.signature(modelType,void.class,clickType.getSuperclass());}
         action=dispatch;
-        stateSingleton=Reflect.field(state,"j",state);stateCache=Reflect.field(state,"c",cache);
-        qsBlocked=Reflect.field(cache,"c",boolean.class);
+        stateSingleton=Reflect.field(state,alternate?"i":"j",state);stateCache=Reflect.field(state,"c",cache);
+        qsBlocked=Reflect.field(cache,alternate?"b":"c",boolean.class);
         Field listener=null;Method callback=null;
         for(Field candidate:state.getDeclaredFields()){
             if(Modifier.isStatic(candidate.getModifiers()))continue;
@@ -64,8 +68,10 @@ final class NativeShadeInteraction {
         }
         if(listener==null)throw new NoSuchFieldException("Missing plugin QS presentation listener");
         qsListener=listener;qsChanged=callback;
-        model=Reflect.field(containerType,legacy?"y":"n",modelType);key=Reflect.field(containerType,legacy?"w":"l",String.class);
-        contentState=Reflect.field(containerType,legacy?"x":"m",content);blank=Reflect.get(Reflect.field(content,legacy?"HIDE":"d",content),null);
+        model=Reflect.field(containerType,alternate?"w":legacy?"y":"n",modelType);
+        key=Reflect.field(containerType,alternate?"u":legacy?"w":"l",String.class);
+        contentState=Reflect.field(containerType,alternate?"v":legacy?"x":"m",content);
+        blank=alternate?ColorOs16Plugin.state(content,"HIDE"):Reflect.get(Reflect.field(content,legacy?"HIDE":"d",content),null);
         count=Reflect.method(containerType,"getCapsuleViewNum",int.class);
         mini=Reflect.method(containerType,legacy?"k":"j",boolean.class);
     }

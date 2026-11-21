@@ -1,5 +1,6 @@
 package dev.lsposed.fluidcloud;
 
+import android.animation.Animator;
 import android.app.Notification;
 import android.content.Context;
 import android.content.res.Configuration;
@@ -11,6 +12,7 @@ import android.text.TextUtils;
 import android.view.View;
 import dev.howard.colorosenhance.notifications.NotificationCloudRules;
 import io.github.libxposed.api.XposedInterface;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.regex.Pattern;
@@ -19,7 +21,7 @@ import org.json.JSONException;
 
 /** Switches the right-hand caption in the OEM capsule parser without altering card content. */
 final class NativeNotificationCapsule {
-    private static final String SHORT_CRITICAL_TEXT = "android.shortCriticalText";
+    static final String SHORT_CRITICAL_TEXT = "android.shortCriticalText";
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
     private record Render(Notification notification, String caption) { }
     private final ThreadLocal<Render> parsing = new ThreadLocal<>();
@@ -27,7 +29,7 @@ final class NativeNotificationCapsule {
     private final Context plugin;
     private final NotificationCloudFeature feature;
     private final Method viewItem;
-    private final java.lang.reflect.Field key;
+    private final Field key;
     private final TextPaint captionPaint = new TextPaint();
     private Configuration captionConfiguration;
     private float captionDensity, captionChrome;
@@ -96,6 +98,7 @@ final class NativeNotificationCapsule {
         String base = "com.oplus.systemui.plugins.seedling.capsule.";
         Class<?> callback = Reflect.type(loader, base + "data.repo.d");
         var owner = Reflect.field(callback, "c", Reflect.type(loader, base + "data.model.e"));
+        Field templateView = templateViewField(callback);
         var start = Reflect.method(callback, "x", void.class, Bundle.class);
         hooks.add(feature.module.hook(start).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
             Object bound = Reflect.get(owner, chain.getThisObject());
@@ -103,17 +106,41 @@ final class NativeNotificationCapsule {
             int limit = widthLimit((View) bound);
             if (limit == Integer.MAX_VALUE) return chain.proceed();
             Bundle params = (Bundle) chain.getArg(0);
-            String steps = params.getString("animValue");
-            if (steps == null || params.getInt("type", -1) != 0) return chain.proceed();
-            try {
-                WidthAnimation result = boundedAnimation(steps, limit);
-                if (result == null) return chain.proceed();
-                if (result.stationary()) return null;
-                Bundle capped = new Bundle(params);
-                capped.putString("animValue", result.segments());
-                return chain.proceed(new Object[]{capped});
-            } catch (JSONException invalid) { return chain.proceed(); }
+            View template = templateView == null ? null : (View) Reflect.get(templateView, chain.getThisObject());
+            Bundle capped = constrainWidthAnimation(params, limit, template);
+            if (capped == null) return null;
+            return capped == params ? chain.proceed() : chain.proceed(new Object[]{capped});
         }));
+    }
+
+    private static Field templateViewField(Class<?> callback) {
+        try { return Reflect.field(callback, "b", View.class); }
+        catch (NoSuchFieldException missing) { return null; }
+    }
+
+    static Bundle constrainWidthAnimation(Bundle params, int limit, View template) {
+        String steps = params.getString("animValue");
+        if (steps == null || params.getInt("type", -1) != 0) return params;
+        WidthAnimation result;
+        try { result = boundedAnimation(steps, limit); }
+        catch (JSONException invalid) { return params; }
+        if (result == null) return params;
+        if (result.stationary() && applyStationaryTemplateUpdate(params, template)) return null;
+        Bundle capped = new Bundle(params);
+        capped.putString("animValue", result.segments());
+        return capped;
+    }
+
+    private static boolean applyStationaryTemplateUpdate(Bundle params, View template) {
+        int tag = params.getInt("animObjTag", 0);
+        if (template == null || tag == 0 || !(template.getTag(tag) instanceof Animator animator)) return false;
+        // The native width event also starts the template animator that commits the new text.
+        // Use ColorOS's zero-duration start for this case without animating the status bar.
+        if (!animator.isStarted()) {
+            animator.setDuration(0L);
+            animator.start();
+        }
+        return true;
     }
 
     record WidthAnimation(String segments, boolean stationary) { }
@@ -146,6 +173,11 @@ final class NativeNotificationCapsule {
     }
 
     String caption(StatusBarNotification sbn, Context host, NotificationCloudRules rules, int maxDp) {
+        String text = captionText(sbn, host, rules);
+        return maxDp > 0 ? limit(text, maxDp) : text;
+    }
+
+    static String captionText(StatusBarNotification sbn, Context host, NotificationCloudRules rules) {
         Notification n = sbn.getNotification();
         CharSequence label = null;
         if (rules.capsuleText() == NotificationCloudRules.CapsuleText.CONTENT && n.extras != null) {
@@ -153,8 +185,7 @@ final class NativeNotificationCapsule {
             if (TextUtils.isEmpty(label)) label = n.extras.getCharSequence(Notification.EXTRA_TITLE);
         }
         if (TextUtils.isEmpty(label)) label = NotificationCollectionPage.appName(host, sbn.getPackageName());
-        String text = WHITESPACE.matcher(label).replaceAll(" ").trim();
-        return maxDp > 0 ? limit(text, maxDp) : text;
+        return WHITESPACE.matcher(label).replaceAll(" ").trim();
     }
 
     Object parse(Method method, Object parser, StatusBarNotification sbn, String label) {

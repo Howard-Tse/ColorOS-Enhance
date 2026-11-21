@@ -20,8 +20,10 @@ import io.github.libxposed.api.XposedInterface;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 /** Uses SystemUI's existing notification collection; never binds a second listener service. */
 final class NotificationCloudFeature {
@@ -32,14 +34,14 @@ final class NotificationCloudFeature {
     private final Method all, sbn, ranking, findEntry;
     private Object collection;
     private Context context;
-    private NativeNotificationCloud nativeCloud;
+    private NotificationCloudRenderer nativeCloud;
     private NotificationCloudPresentation presentation;
     private boolean scheduled, active, updatingNative;
     private volatile boolean configured;
     private boolean screenBlocked;
     private boolean unlockedSnapshot;
     private Object observedCollection, collectionObserver;
-    private final java.util.Set<String> popupKeys = new java.util.HashSet<>();
+    private final Set<String> newNotificationKeys = new HashSet<>();
     private NotificationCloudActions actions;
     private NotificationCollectionPage collectionPage;
     private final NotificationOpenCleanup openCleanup;
@@ -65,7 +67,13 @@ final class NotificationCloudFeature {
         Class<?> observerType = Reflect.type(loader, "com.android.systemui.statusbar.notification.collection.notifcollection.NotifCollectionListener");
         collectionObserver = Reflect.listener(observerType, (event, args) -> {
             if (!configured && !active) return;
-            if (event.getName().equals("onEntryRemoved")) store.remove(notification(args[0]).getKey());
+            if (event.getName().equals("onEntryAdded") && enabled() && active && unlocked())
+                newNotificationKeys.add(notification(args[0]).getKey());
+            if (event.getName().equals("onEntryRemoved")) {
+                String key = notification(args[0]).getKey();
+                newNotificationKeys.remove(key);
+                store.remove(key);
+            }
             changed();
         });
         for (var constructor : pipeline.getDeclaredConstructors()) {
@@ -155,9 +163,13 @@ final class NotificationCloudFeature {
             filter.addAction("android.intent.action.USER_SWITCHED"); filter.addAction(Intent.ACTION_MANAGED_PROFILE_UNAVAILABLE);
             context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
         }
-        if (nativeCloud == null || nativeCloud.loader != root.getClass().getClassLoader()) try {
+        ClassLoader loader = root.getClass().getClassLoader();
+        if (nativeCloud == null || nativeCloud.loader() != loader) try {
             if (nativeCloud != null) nativeCloud.close();
-            nativeCloud = new NativeNotificationCloud(this, root, host); changed();
+            Class<?> container = Reflect.type(loader, NativeCapsuleAppearance.VIEWS + "CapsuleContainer");
+            nativeCloud = ColorOs16Plugin.capsule(container) ? new LegacyNotificationCloud(this, loader, host)
+                    : new NativeNotificationCloud(this, root, host);
+            changed();
             module.report(DiagnosticPoint.NOTIFICATION_RENDERER, DiagnosticPoint.State.READY);
             module.info("Notification cloud native source connected");
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
@@ -201,10 +213,11 @@ final class NotificationCloudFeature {
             // A successful open stays cleared until the source notification is removed, including across lock/unlock.
             if (!enabled()) store.clear(); else store.forgetViews();
             if (actions != null) actions.retainFloatingButtons(java.util.Set.of());
-            entries.clear(); popupKeys.clear(); active = false; return;
+            entries.clear(); newNotificationKeys.clear(); active = false; return;
         }
         try {
             var next = new LinkedHashMap<String, Object>();
+            Set<String> reminders = newNotificationKeys.isEmpty() ? Set.of() : new HashSet<>();
             java.util.Set<String> liveKeys = new java.util.HashSet<>();
             var live = new ArrayList<StatusBarNotification>();
             for (Object entry : (Collection<?>) Reflect.call(all, collection)) {
@@ -213,28 +226,39 @@ final class NotificationCloudFeature {
                 if (NotificationCloudPresentation.summary(notification)) continue;
                 String key = notification.getKey();
                 liveKeys.add(key);
-                if (!eligible(entry, notification)) continue;
+                var mode = mode(entry, notification);
+                if (mode == NotificationCloudRules.Mode.NATIVE) continue;
                 next.put(key, entry);
                 var current = store.get(key);
-                if (current == null && active && !entries.containsKey(key)) popupKeys.add(key);
+                if (mode == NotificationCloudRules.Mode.EXPAND && newNotificationKeys.contains(key)) reminders.add(key);
                 if (current == null || current.value() != notification) store.put(key, notification.getPackageName(),
                         notification.getNotification().getChannelId(), notification);
             }
             store.retainSuppressed(liveKeys);
-            popupKeys.retainAll(next.keySet());
+            newNotificationKeys.clear();
+            Set<String> autoExpand = !reminders.isEmpty() && permitsAutoExpansion() ? reminders : Set.of();
             if (actions != null) actions.retainFloatingButtons(next.keySet());
             for (var entry : store.entries()) if (!next.containsKey(entry.key())) store.forgetView(entry.key());
             entries.clear(); entries.putAll(next);
             updatingNative = true;
-            try { nativeCloud.update(store.entries().stream().filter(e -> !store.suppressed(e.key())).toList(), rules); }
+            try { nativeCloud.update(store.entries().stream().filter(e -> !store.suppressed(e.key())).toList(), rules, autoExpand); }
             finally { updatingNative = false; }
             if (presentation != null) presentation.refresh(live);
             if (collectionPage != null) collectionPage.refresh();
             active = true;
         } catch (RuntimeException | LinkageError failure) {
+            newNotificationKeys.clear();
             store.clear(); if (nativeCloud != null) nativeCloud.update(java.util.List.of(), rules);
             readinessChanged();
             failure("Notification conversion failed; originals retained", failure);
+        }
+    }
+    private boolean permitsAutoExpansion() {
+        try {
+            NotificationManager manager = context.getSystemService(NotificationManager.class);
+            return manager != null && manager.getCurrentInterruptionFilter() == NotificationManager.INTERRUPTION_FILTER_ALL;
+        } catch (SecurityException unavailable) {
+            return false;
         }
     }
     private void publishAlertStatus(boolean available) {
@@ -271,23 +295,13 @@ final class NotificationCloudFeature {
     }
     boolean ready(String key, long generation) {
         var item = store.get(key);
-        if (item == null || !store.ready(key, generation)) return false;
-        if (popupKeys.remove(key) && mode(key) == NotificationCloudRules.Mode.EXPAND) {
-            NotificationManager manager = context.getSystemService(NotificationManager.class);
-            if (manager.getCurrentInterruptionFilter() == NotificationManager.INTERRUPTION_FILTER_ALL)
-                nativeCloud.popup(key);
-        }
-        return !item.ready();
+        return item != null && store.ready(key, generation) && !item.ready();
     }
     void readinessChanged() {
         // Synchronous readiness is picked up by refresh() with its collection snapshot.
         if (updatingNative) return;
         if (presentation != null) presentation.refresh();
         if (collectionPage != null) collectionPage.refresh();
-    }
-    private NotificationCloudRules.Mode mode(String key) {
-        Object entry = entries.get(key); if (entry == null) return NotificationCloudRules.Mode.NATIVE;
-        return mode(entry, notification(entry));
     }
     private NotificationCloudRules.Mode mode(Object entry, StatusBarNotification sbn) {
         if (!rules.accepts(sbn.getPackageName())) return NotificationCloudRules.Mode.NATIVE;

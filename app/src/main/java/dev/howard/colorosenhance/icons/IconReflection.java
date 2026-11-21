@@ -26,6 +26,17 @@ final class IconReflection {
     static Method optional(Class<?> type, String name, Class<?>... args) {
         try { return method(type, name, args); } catch (NoSuchMethodException absent) { return null; }
     }
+    static Method alphaSetter(Class<?> type) throws NoSuchMethodException {
+        Method tagged = optional(type, "setAlpha", float.class, String.class);
+        Method setter = tagged != null ? tagged : method(type, "setAlpha", float.class);
+        if (setter.getReturnType() != void.class || java.lang.reflect.Modifier.isStatic(setter.getModifiers()))
+            throw new NoSuchMethodException(type.getName() + ".setAlpha");
+        return setter;
+    }
+    static void applyOrderAlpha(Method setter, Object state) throws ReflectiveOperationException {
+        if (setter.getParameterCount() == 2) setter.invoke(state, 1f, "ColorOS Enhance icon order");
+        else setter.invoke(state, 1f);
+    }
     static Object call(Object object, String name) throws ReflectiveOperationException {
         return method(object.getClass(), name).invoke(object);
     }

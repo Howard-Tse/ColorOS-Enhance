@@ -273,6 +273,31 @@ public class NativeCameraCardTest {
             contract.restore();
         }
     }
+
+    @Test public void onlyTheFirstCardBudgetsItsOwnedCameraInsetWhenMeasuringRoundedTemplates() throws Exception {
+        var context = Robolectric.buildActivity(Activity.class).setup().get();
+        var list = new Container(context);
+        var first = card(context, 7, 84);
+        var second = card(context, 7, 84);
+        list.addView(first);
+        list.addView(second);
+        var contract = new NativeCameraCard(lookup(false), (view, y) -> new NativeCameraCard.Plan(y - 28, 28));
+        list.setTranslationY(200);
+        contract.afterNativeLayout(list, true);
+        int heightSpec = View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.AT_MOST);
+        assertEquals(28, contract.cameraContentInset(first));
+        assertEquals(0, contract.cameraContentInset(second));
+        int firstBodyHeight = CloudCorners.compactCardHeight(84, 300, heightSpec, 64, contract.cameraContentInset(first));
+        int secondBodyHeight = CloudCorners.compactCardHeight(84, 300, heightSpec, 64, contract.cameraContentInset(second));
+        assertEquals(100, firstBodyHeight);
+        assertEquals(128, secondBodyHeight);
+        assertEquals(128, contract.intrinsicHeight(first, firstBodyHeight, true));
+        assertEquals(128, contract.intrinsicHeight(second, secondBodyHeight, true));
+        contract.beforeMeasure(first, false);
+        assertEquals(0, contract.cameraContentInset(first));
+        assertEquals(7, margin(first.i));
+        contract.restore();
+    }
     @Test public void childOnlySdkReplacementAndClipResetAreRepairedBeforeDrawingParentAgain() throws Exception {
         var context=Robolectric.buildActivity(Activity.class).setup().get();var list=new Container(context);
         var card=templateCard(context);list.addView(card);var contract=contract(false);

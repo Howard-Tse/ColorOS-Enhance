@@ -1,9 +1,6 @@
 package dev.lsposed.fluidcloud;
 
-import android.os.SystemClock;
-import android.view.MotionEvent;
 import android.view.View;
-import dev.howard.colorosenhance.notifications.NotificationCloudRules;
 import io.github.libxposed.api.XposedInterface;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -16,14 +13,13 @@ import java.util.List;
 final class NativeNotificationControls {
     private final NotificationCloudFeature feature;
     private final ArrayList<XposedInterface.HookHandle> hooks = new ArrayList<>();
-    private final Method select, expand, timeout;
+    private final Method timeout;
     private final Method cardShowing;
     private final Field cardSingleton;
+    private final Method autoCardClose, autoCardTransition;
+    private final Field cardState;
     private final NativeNotificationCardTouch cardTouch;
-    private final List<java.lang.ref.WeakReference<Object>> owners = new ArrayList<>();
-    private int popupGeneration;
     private int menuGeneration;
-    private long lastPopup, lastTouch;
 
     @SuppressWarnings("unchecked")
     NativeNotificationControls(NotificationCloudFeature feature, View root, Class<?> model) throws ReflectiveOperationException {
@@ -35,8 +31,7 @@ final class NativeNotificationControls {
         Method state = Reflect.method(owner, "n", int.class, ArrayList.class);
         Method apply = Reflect.method(owner, "g", void.class, int.class, boolean.class);
         Method click = Reflect.method(owner, "p", void.class, String.class, boolean.class);
-        select = Reflect.method(owner, "G", void.class, String.class, String.class, boolean.class, boolean.class);
-        expand = Reflect.method(owner, "w", void.class, String.class);
+        Method expand = Reflect.method(owner, "w", void.class, String.class);
         Method normal = Reflect.method(owner, "v", void.class, owner, String.class);
         Field list = Reflect.field(owner, "g", ArrayList.class), force = Reflect.field(owner, "y", boolean.class), blocked = Reflect.field(owner, "j", boolean.class);
         Field candidateKey = Reflect.field(capsule, "a", String.class);
@@ -60,6 +55,19 @@ final class NativeNotificationControls {
         cardSingleton = Reflect.uniqueField(card, field -> java.lang.reflect.Modifier.isStatic(field.getModifiers()) && field.getType() == card);
         timeout = Reflect.method(card, "k", boolean.class, String.class);
         cardShowing = Reflect.method(card, "m", boolean.class);
+        Method close = null, transition = null;
+        Field currentState = null;
+        try {
+            String cardPackage = "com.oplus.systemui.plugins.seedling.card.";
+            Class<?> eventData = Reflect.type(loader, cardPackage + "ui.viewmodel.g");
+            Class<?> cardItem = Reflect.type(loader, cardPackage + "ui.model.o");
+            currentState = Reflect.field(card, "h", String.class);
+            transition = Reflect.method(card, "j", eventData, card, boolean.class, cardItem, int.class);
+            close = Reflect.method(card, "e", boolean.class, String.class, eventData);
+        } catch (ReflectiveOperationException unavailable) { /* The automatic card still expires in ColorOS. */ }
+        autoCardClose = close;
+        autoCardTransition = transition;
+        cardState = currentState;
         Class<?> interactor = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.data.interactor.l");
         Method dismiss = Reflect.method(interactor, "b", void.class, wrapped, boolean.class);
         Method key = Reflect.method(wrapped, "getKey", String.class);
@@ -80,7 +88,7 @@ final class NativeNotificationControls {
                 return capacity.present(chain.getThisObject(), data);
             }));
             hooks.add(feature.module.hook(update).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
-                Object instance = chain.getThisObject(); remember(instance);
+                Object instance = chain.getThisObject();
                 List<?> input = (List<?>) chain.getArg(0);
                 if (!feature.enabled() || feature.store.entries().isEmpty() || input.size() <= 4) return chain.proceed();
                 boolean converted = false;
@@ -102,7 +110,7 @@ final class NativeNotificationControls {
                 force.setBoolean(instance, false); return null;
             }));
             hooks.add(feature.module.hook(click).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
-                String selected = (String) chain.getArg(0); lastTouch = SystemClock.uptimeMillis(); popupGeneration++;
+                String selected = (String) chain.getArg(0);
                 if (!feature.enabled() || feature.store.get(selected) == null) return chain.proceed();
                 if (feature.rules().directOpen() && feature.store.get(selected).value().getNotification().contentIntent != null) {
                     feature.armGroupOpen(selected);
@@ -116,13 +124,6 @@ final class NativeNotificationControls {
                 // The synthetic model is owned by the active Android notification, not the OEM timeout.
                 return null;
             }));
-            Class<?> container = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.card.ui.view.CardContainer");
-            for (Method method : container.getDeclaredMethods()) if ((method.getName().equals("onTouchEvent") || method.getName().equals("onInterceptTouchEvent"))
-                    && java.util.Arrays.equals(method.getParameterTypes(), new Class<?>[]{MotionEvent.class})) hooks.add(feature.module.hook(method)
-                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
-                        if (((MotionEvent) chain.getArg(0)).getActionMasked() == MotionEvent.ACTION_DOWN) { lastTouch = SystemClock.uptimeMillis(); popupGeneration++; }
-                        return chain.proceed();
-                    }));
             Class<?> actionEvent = Reflect.type(loader, "com.heytap.log.strategy.f");
             Class<?> clickEvent = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.card.ui.model.c");
             Class<?> cardItem = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.card.ui.model.o");
@@ -149,40 +150,17 @@ final class NativeNotificationControls {
     }
     boolean holds(String selected) { return cardTouch != null && cardTouch.holds(selected); }
     @SuppressWarnings({"unchecked", "rawtypes"}) private static Object enumValue(Class<?> type, String name) { return Enum.valueOf((Class) type, name); }
-    private void remember(Object owner) {
-        owners.removeIf(reference -> reference.get() == null);
-        for (var reference : owners) if (reference.get() == owner) return;
-        owners.add(new java.lang.ref.WeakReference<>(owner));
-    }
-    void popup(String key) {
-        long now = SystemClock.uptimeMillis();
-        if (now - lastPopup < 3000 || now - lastTouch < 1000 || !feature.unlocked()) return;
-        int generation = ++popupGeneration;
-        feature.main.postDelayed(() -> {
-            if (generation != popupGeneration || !feature.enabled() || !feature.unlocked() || feature.store.get(key) == null) return;
-            Object currentCard = Reflect.get(cardSingleton, null);
-            if (currentCard != null && Boolean.TRUE.equals(Reflect.call(cardShowing, currentCard))) return;
-            for (var reference : owners) {
-                Object owner = reference.get(); if (owner == null) continue;
-                try {
-                    Object model = feature.store.get(key).value();
-                    String service = "laid_" + ((android.service.notification.StatusBarNotification) model).getPackageName();
-                    Reflect.call(select, owner, key, service, true, true); Reflect.call(expand, owner, key);
-                    lastPopup = SystemClock.uptimeMillis();
-                    int seconds = feature.module.cloudValues().get("notification_popup_seconds") instanceof Number value ? Math.max(1, Math.min(15, value.intValue())) : 3;
-                    feature.main.postDelayed(() -> {
-                        if (generation != popupGeneration || !feature.unlocked()) return;
-                        Object card = Reflect.get(cardSingleton, null); if (card != null) Reflect.call(timeout, card, "EVENT_CARD_TIME_OUT");
-                    }, seconds * 1000L); break;
-                } catch (RuntimeException | LinkageError failure) { feature.failure("Notification automatic expansion unavailable", failure); }
-            }
-        }, 250);
-    }
     void closeCard(Runnable continuation) {
-        popupGeneration++;
         int generation = ++menuGeneration;
         Object card = Reflect.get(cardSingleton, null);
-        if (card != null && Boolean.TRUE.equals(Reflect.call(cardShowing, card))) Reflect.call(timeout, card, "EVENT_CARD_TOUCH_OUT");
+        if (card != null && Boolean.TRUE.equals(Reflect.call(cardShowing, card))) {
+            boolean closed = Boolean.TRUE.equals(Reflect.call(timeout, card, "EVENT_CARD_TOUCH_OUT"));
+            if (!closed && autoCardClose != null && "CARD_STATE_AUTO".equals(Reflect.get(cardState, card))) {
+                // An explicit menu action may leave the automatic card before its native timer ends.
+                Object transition = Reflect.call(autoCardTransition, null, card, false, null, 15);
+                Reflect.call(autoCardClose, card, "EVENT_CARD_TOUCH_OUT", transition);
+            }
+        }
         afterCardClosed(generation, continuation, 0);
     }
     private void afterCardClosed(int generation, Runnable continuation, int attempt) {
@@ -192,9 +170,9 @@ final class NativeNotificationControls {
         if (attempt < 40) feature.main.postDelayed(() -> afterCardClosed(generation, continuation, attempt + 1), 20);
     }
     void close() {
-        popupGeneration++; menuGeneration++;
+        menuGeneration++;
         if (cardTouch != null) cardTouch.close();
         for (var hook : hooks) hook.unhook();
-        hooks.clear(); owners.clear();
+        hooks.clear();
     }
 }

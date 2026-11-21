@@ -1,5 +1,8 @@
 package dev.howard.colorosenhance;
 
+import dev.howard.colorosenhance.notifications.NotificationCloudRules;
+import dev.lsposed.fluidcloud.CapsulePosition;
+import dev.lsposed.fluidcloud.CloudCorners;
 import dev.lsposed.fluidcloud.MediaWaveBands;
 import dev.lsposed.fluidcloud.MediaWaveOptions;
 import java.util.List;
@@ -73,14 +76,14 @@ public final class SettingsCatalog {
     }
     private static List<Item> cloudItems() {
         List<Item> items = new ArrayList<>();
-        items.add(flag("通知转流体云", "notification_cloud_enabled", "通知转流体云",
+        items.add(flag("通知转流体云", NotificationCloudRules.ENABLED, "通知转流体云",
                 "按应用、渠道与通知种类转换，默认空白名单。频繁更新的进度或网速通知会增加 SystemUI 负载，耗电敏感时可排除这些应用或渠道。"));
         items.add(new Item("通知转流体云", "notification_popup_seconds", "自动展开停留时间",
                 "仅用于选择了自动展开的通知；不打断操作，勿扰或锁屏时不自动展开。", false,
-                "notification_popup_seconds", 3, 1, 15, 1, 1, "秒", new Visibility("notification_cloud_enabled", true), null));
+                "notification_popup_seconds", 3, 1, 15, 1, 1, "秒", new Visibility(NotificationCloudRules.ENABLED, true), null));
         items.add(new Item("通知转流体云", "notification_capsule_max_dp", "通知胶囊最大长度",
                 "0 dp 保持原厂宽度。仅限制通知胶囊，内容超出时省略。最小宽度 48 dp。", false,
-                "notification_capsule_max_dp", 0, 0, 240, 1, 1, "dp", new Visibility("notification_cloud_enabled", true), null));
+                "notification_capsule_max_dp", 0, 0, 240, 1, 1, "dp", new Visibility(NotificationCloudRules.ENABLED, true), null));
         items.add(flag("媒体","keep_paused_music","保持媒体流体云",
                 "有效媒体会话未播放或暂停时也保持显示；会话结束或应用退出后恢复系统处理。"));
         items.add(flag("媒体","media_card_in_shade","在通知中心显示媒体卡片",
@@ -105,12 +108,18 @@ public final class SettingsCatalog {
         items.add(new Item("小胶囊外观","capsule_height_percent","纵向高度",
                 "按原厂高度的比例调整，100% 保持原厂。",false,"capsule_height_percent",100,50,200,1,1,"%",
                 new Visibility("capsule_size_enabled",true),null));
+        items.add(value("小胶囊外观","capsule_offset_x_dp","横向位置",
+                "负值向左，正值向右，0 dp 为原厂位置。偏移受状态栏可用空间限制。",
+                "capsule_offset_x_dp",0,-CapsulePosition.HORIZONTAL_LIMIT_DP,CapsulePosition.HORIZONTAL_LIMIT_DP,1,1,"dp"));
+        items.add(value("小胶囊外观","capsule_offset_y_dp","纵向位置",
+                "负值向上，正值向下，0 dp 为原厂位置。可移动距离随胶囊高度变化。",
+                "capsule_offset_y_dp",0,-CapsulePosition.VERTICAL_LIMIT_DP,CapsulePosition.VERTICAL_LIMIT_DP,1,1,"dp"));
         items.add(flag("小胶囊外观","hide_capsule_stroke","隐藏小胶囊边框",
                 "隐藏深色背景下的原生边框；关闭后按当前背景恢复系统处理。"));
         items.add(flag("小胶囊外观","hide_capsule_arrows","隐藏左右切换提示",
                 "隐藏小胶囊两侧的切换指示，不影响左右滑动。关闭后恢复原生提示规则。"));
         items.add(value("小胶囊外观","capsule_corners_enabled","自定义小胶囊圆角",
-                "调节半径，最大值随胶囊高度限制。关闭后恢复原厂外形。","capsule_corner_dp",16,0,24,1,1,"dp"));
+                "调节胶囊两端的圆角。超过高度的一半后，圆角继续向横向延伸。关闭后恢复原厂外形。","capsule_corner_dp",16,0,24,1,1,"dp"));
         items.add(flag("小胶囊外观","capsule_continuous_corners","小胶囊连续圆角",
                 "启用自定义圆角后，使直边与弯曲边缘平滑衔接。"));
         items.add(flag("小胶囊外观","capsule_keep_in_foreground","前台应用内保留流体云胶囊",
@@ -127,11 +136,12 @@ public final class SettingsCatalog {
                 "随卡片展开加深、收起减弱；在通知中心或控制中心中也生效。关闭恢复原厂。",
                 "card_dim_percent",30,0,100,1,1,"%"));
         items.add(value("展开卡片","card_corners_enabled","自定义展开卡片圆角",
-                "调节展开卡片的半径，重新展开卡片后生效。","card_corner_dp",28,0,64,1,1,"dp"));
+                "调节展开卡片的半径。较大的半径可能增加较矮卡片的高度，重新展开卡片后生效。",
+                "card_corner_dp",28,0,CloudCorners.CARD_RADIUS_MAX_DP,1,1,"dp"));
         items.add(flag("展开卡片","card_continuous_corners","展开卡片连续圆角",
                 "启用自定义圆角后，使直边与弯曲边缘平滑衔接。重新展开卡片后生效。"));
         items.add(flag("场景控制","unbind_status_bar","流体云与状态栏解绑",
-                "启用后需重启系统界面。模块会额外绘制胶囊，动态内容可能增加耗电。横竖屏可独立设置，横屏默认跟随系统。"));
+                "开启后重启系统界面，并在下方的竖屏或横屏场景中选择「保持显示」或「动画补全」。未配置的场景仍跟随系统。动态胶囊可能增加耗电。"));
         items.add(flag("场景控制","capsule_on_top","流体云胶囊置顶",
                 "提高胶囊窗口层级，胶囊可显示在展开卡片上方。修改后重启系统界面。"));
         items.add(flag("场景控制","capsule_keep_during_launch","应用转场时保持胶囊显示",
@@ -163,6 +173,9 @@ public final class SettingsCatalog {
         if ("icons".equals(group)) return Boolean.TRUE.equals(values.get("enabled"));
         if (!"cloud".equals(group)) return true;
         if (!Boolean.TRUE.equals(values.get("enabled"))) return false;
+        if (NotificationCloudRules.ENABLED.equals(key)) return true;
+        if ("notification_popup_seconds".equals(key) || "notification_capsule_max_dp".equals(key))
+            return Boolean.TRUE.equals(values.get(NotificationCloudRules.ENABLED));
         if(key.startsWith("wave_"))return Boolean.TRUE.equals(values.get("realtime_media_wave"));
         if ("capsule_height_percent".equals(key)) return Boolean.TRUE.equals(values.get("capsule_size_enabled"));
         if ("capsule_continuous_corners".equals(key)) return Boolean.TRUE.equals(values.get("capsule_corners_enabled"));
@@ -174,7 +187,8 @@ public final class SettingsCatalog {
         return "keep_paused_music".equals(key) || "media_card_in_shade".equals(key) || "realtime_media_wave".equals(key) || "block_capsule_click_top".equals(key)
                 || "camera_card_expansion".equals(key) || "unbind_status_bar".equals(key)
                 || List.of("hide_capsule_stroke","hide_capsule_arrows","capsule_keep_in_foreground","skip_empty_capsule","card_dim_enabled",
-                        "capsule_corners_enabled","card_corners_enabled","capsule_size_enabled","selected_card_first").contains(key)
+                        "capsule_corners_enabled","card_corners_enabled","capsule_size_enabled","capsule_offset_x_dp","capsule_offset_y_dp",
+                        "selected_card_first").contains(key)
                 || Boolean.TRUE.equals(values.get("unbind_status_bar"));
     }
     public static boolean sectionVisible(Group group, String section, Map<String, ?> values) {

@@ -38,7 +38,8 @@ final class NativeInstantCameraCard {
         this.touchWriter = touchWriter;
         type = lookup.load(NativeCameraCard.VIEWS + "InstantContainer");
         if (!FrameLayout.class.isAssignableFrom(type)) throw new NoSuchMethodException("Instant container type");
-        Class<?> model = lookup.load(cards.legacy ? "h5.n" : "com.oplus.systemui.plugins.seedling.card.ui.model.n");
+        Class<?> model = lookup.load(cards.alternateLegacy ? "t4.n"
+                : cards.legacy ? "h5.n" : "com.oplus.systemui.plugins.seedling.card.ui.model.n");
         state = Reflect.method(type, "k", void.class, model, boolean.class, boolean.class);
         position = Reflect.method(type, cards.legacy ? "q" : "s", void.class);
         draw = Reflect.method(type, "dispatchDraw", void.class, android.graphics.Canvas.class);

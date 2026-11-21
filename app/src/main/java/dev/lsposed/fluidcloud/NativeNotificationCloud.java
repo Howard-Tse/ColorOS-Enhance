@@ -14,9 +14,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** Feed ordinary notifications into the OEM notification renderer, rather than cloning its window. */
-final class NativeNotificationCloud {
+final class NativeNotificationCloud implements NotificationCloudRenderer {
     final ClassLoader loader;
     private final Context host;
     private final NotificationCloudFeature feature;
@@ -35,10 +36,12 @@ final class NativeNotificationCloud {
     private final Map<String, List<NotificationCloudStore.Entry<StatusBarNotification>>> coverage = new LinkedHashMap<>();
     private final Map<String, String> representatives = new LinkedHashMap<>();
     private final NativeNotificationControls controls;
+    private final NativeNotificationReminders reminders;
     private final Runnable readinessCheck = this::pollReadiness;
     private int readinessChecksLeft;
     private boolean readinessQueued;
     private final NativeNotificationCapsule capsule;
+    private final NativeShadeNotificationDismissal shadeDismissal;
     private record Appearance(NotificationCloudRules.Style style, NotificationCloudRules.CapsuleText text, int limit,
             boolean floating, Map<String, NotificationCloudRules.Floating> appFloating) { }
     private Appearance appearance;
@@ -87,6 +90,14 @@ final class NativeNotificationCloud {
         }
         shadeEntry = shade;
         shadeListener = shadeUpdates;
+        NativeShadeNotificationDismissal shadeSwipe = null;
+        if (shadeListener != null) try {
+            shadeSwipe = new NativeShadeNotificationDismissal(feature, loader, host.getClassLoader());
+            feature.module.info("Native notification-center swipe dismissal installed");
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+            feature.failure("Native notification-center swipe dismissal unavailable", unavailable);
+        }
+        shadeDismissal = shadeSwipe;
         NativeNotificationCapsule capsuleOptions = null;
         try { capsuleOptions = new NativeNotificationCapsule(feature, loader, root.getContext()); }
         catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
@@ -103,19 +114,32 @@ final class NativeNotificationCloud {
             optional = null; feature.failure("Notification capsule controls unavailable; original notifications retained", failure);
         }
         controls = optional;
+        NativeNotificationReminders nativeReminders = null;
+        if (controls != null) try {
+            nativeReminders = new NativeNotificationReminders(model, placementMetadata);
+            nativeReminders.installDuration(feature, loader);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+            feature.failure(nativeReminders == null ? "Native notification auto-expansion unavailable"
+                    : "Native notification auto-expansion uses the system duration", unavailable);
+        }
+        reminders = nativeReminders;
     }
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static Object enumValue(Class<?> type, String name) { return Enum.valueOf((Class) type, name); }
 
-    void update(List<NotificationCloudStore.Entry<StatusBarNotification>> notifications, NotificationCloudRules rules) {
+    @Override public ClassLoader loader() { return loader; }
+
+    @Override public void update(List<NotificationCloudStore.Entry<StatusBarNotification>> notifications, NotificationCloudRules rules,
+            Set<String> autoExpand) {
         Appearance rendering = new Appearance(rules.style(), rules.capsuleText(), feature.capsuleMaxDp(),
                 rules.floating(), rules.appFloating());
         boolean changedAppearance = !rendering.equals(appearance);
         boolean showShade = rules.shadeCards() && shadeListener != null && !notifications.isEmpty();
-        if (!changedAppearance && showShade == shadeShown && grouped == rules.groupApps()
+        if (autoExpand.isEmpty() && !changedAppearance && showShade == shadeShown && grouped == rules.groupApps()
                 && notifications.equals(projected)) return;
         projected = null;
         boolean complete = true;
+        boolean reminderChanged = false;
         List<Object> next = new ArrayList<>();
         List<Object> shadeNext = new ArrayList<>();
         Map<String, NotificationCloudGrouping.RenderVersion> nextVersions = new LinkedHashMap<>();
@@ -163,6 +187,16 @@ final class NativeNotificationCloud {
                         feature.failure("Native shade card unavailable", failure);
                     }
                 }
+                if (reminders != null && !waitingForTouch.contains(item.key())) {
+                    var latest = group.getLast();
+                    boolean request = autoExpand.contains(latest.key());
+                    Object seconds = request ? feature.module.cloudValues().get("notification_popup_seconds") : null;
+                    try {
+                        reminderChanged |= reminders.update(model, latest.key(), latest.value().getPostTime(), request, seconds);
+                    } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
+                        feature.failure("Native notification reminder unavailable", failure);
+                    }
+                }
                 next.add(model); removed.remove(model); nextVersions.put(item.key(), version);
                 if (showShade && panelModel != null) { shadeNext.add(panelModel); removedFromShade.remove(panelModel); }
                 coverage.put(item.key(), group); for (var member : group) representatives.put(member.key(), item.key());
@@ -179,14 +213,18 @@ final class NativeNotificationCloud {
         waitingForTouch.retainAll(nextVersions.keySet());
         shadeModels.values().removeAll(removedFromShade);
         versions.clear(); versions.putAll(nextVersions);
-        if (listChanged) Reflect.call(changed, listener, next);
+        if (listChanged || reminderChanged) Reflect.call(changed, listener, next);
+        if (shadeDismissal != null) shadeDismissal.publish(shadeModels, coverage);
         if (shadeListener != null && (!previousShade.equals(List.copyOf(shadeModels.keySet())) || shadeShown != showShade))
             Reflect.call(changed, shadeListener, shadeNext);
         shadeShown = showShade;
         grouped = rules.groupApps();
         removed.addAll(removedFromShade);
-        for (Object obsolete : removed) try { Reflect.call(Reflect.method(obsolete.getClass(), "x", void.class), obsolete); }
-        catch (ReflectiveOperationException | RuntimeException unavailable) { feature.module.info("Notification template cleanup deferred to native renderer"); }
+        for (Object obsolete : removed) {
+            if (reminders != null) reminders.forget(obsolete);
+            try { Reflect.call(Reflect.method(obsolete.getClass(), "x", void.class), obsolete); }
+            catch (ReflectiveOperationException | RuntimeException unavailable) { feature.module.info("Notification template cleanup deferred to native renderer"); }
+        }
         if (listChanged) {
             cancelReadiness();
             readinessChecksLeft = 24;
@@ -244,12 +282,11 @@ final class NativeNotificationCloud {
             return chain.proceed();
         });
     }
-    boolean available() { return controls != null; }
-    int capsuleWidthLimit(View view) { return capsule == null ? Integer.MAX_VALUE : capsule.widthLimit(view); }
-    void popup(String key) { if (controls != null) controls.popup(representatives.getOrDefault(key, key)); }
-    void closeCard(Runnable continuation) { if (controls != null) controls.closeCard(continuation); }
-    boolean open(String key) {
-        Object model = models.get(representatives.getOrDefault(key, key)); if (model == null) return openWithActivityStarter(key);
+    @Override public boolean available() { return controls != null; }
+    @Override public int capsuleWidthLimit(View view) { return capsule == null ? Integer.MAX_VALUE : capsule.widthLimit(view); }
+    @Override public void closeCard(Runnable continuation) { if (controls != null) controls.closeCard(continuation); }
+    @Override public boolean open(String key) {
+        Object model = models.get(representatives.getOrDefault(key, key)); if (model == null) return openWithActivityStarter(feature, host, key);
         try {
             List<?> views = (List<?>) Reflect.call(wrappers, model);
             for (String preferred : List.of("VIEW_SIZE_LG", "VIEW_SIZE_SM")) for (Object view : views) {
@@ -268,9 +305,9 @@ final class NativeNotificationCloud {
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
             feature.failure("Notification destination unavailable; original retained", failure);
         }
-        return openWithActivityStarter(key);
+        return openWithActivityStarter(feature, host, key);
     }
-    private boolean openWithActivityStarter(String key) {
+    static boolean openWithActivityStarter(NotificationCloudFeature feature, Context host, String key) {
         var item = feature.store.get(key);
         if (item == null || !feature.unlocked()) return false;
         android.app.PendingIntent target = item.value().getNotification().contentIntent;
@@ -311,14 +348,16 @@ final class NativeNotificationCloud {
         readinessQueued = false;
         readinessChecksLeft = 0;
     }
-    void close() {
+    @Override public void close() {
         cancelReadiness();
         projected = null;
+        if (shadeDismissal != null) shadeDismissal.close();
         Reflect.call(changed, listener, List.of());
         if (shadeListener != null) Reflect.call(changed, shadeListener, List.of());
         models.clear(); shadeModels.clear(); versions.clear(); captions.clear(); waitingForTouch.clear();
         coverage.clear(); representatives.clear();
         if (controls != null) controls.close();
+        if (reminders != null) reminders.close();
         if (capsule != null) capsule.close();
     }
 }

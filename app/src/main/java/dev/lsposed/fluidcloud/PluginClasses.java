@@ -1,6 +1,8 @@
 package dev.lsposed.fluidcloud;
 
+import android.content.Context;
 import dalvik.system.DexFile;
+import dev.howard.colorosenhance.diagnostics.SeedlingSdkDiagnostics;
 import java.lang.reflect.Field;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -22,20 +24,48 @@ final class PluginClasses {
 
     private PluginClasses(ClassLoader loader) throws ReflectiveOperationException {
         this.loader = loader;
-        Object pathList = Reflect.get(Reflect.field(loader.getClass(), "pathList", Object.class), loader);
-        Object[] elements = (Object[]) Reflect.get(Reflect.field(pathList.getClass(), "dexElements", Object[].class), pathList);
         var classes = new LinkedHashSet<String>();
         var files = new LinkedHashSet<String>();
-        for (Object element : elements) {
-            Field dexField = Reflect.field(element.getClass(), "dexFile", DexFile.class);
-            DexFile dex = (DexFile) Reflect.get(dexField, element);
-            if (dex == null) continue;
+        for (DexFile dex : dexFiles(loader)) {
             files.add(dex.getName());
             var entries = dex.entries();
             while (entries.hasMoreElements()) classes.add(entries.nextElement());
         }
         names = List.copyOf(classes);
         paths = List.copyOf(files);
+    }
+
+    private static List<DexFile> dexFiles(ClassLoader loader) throws ReflectiveOperationException {
+        Object pathList = Reflect.get(Reflect.field(loader.getClass(), "pathList", Object.class), loader);
+        Object[] elements = (Object[]) Reflect.get(Reflect.field(pathList.getClass(), "dexElements", Object[].class), pathList);
+        var files = new java.util.ArrayList<DexFile>();
+        for (Object element : elements) {
+            var dex = (DexFile) Reflect.get(Reflect.field(element.getClass(), "dexFile", DexFile.class), element);
+            if (dex != null) files.add(dex);
+        }
+        return files;
+    }
+
+    static SeedlingSdkDiagnostics.ArchivePaths seedlingPaths(ClassLoader plugin, Context host)
+            throws ReflectiveOperationException {
+        List<String> loaded = loadedSeedlingPaths(plugin);
+        if (!loaded.isEmpty()) return new SeedlingSdkDiagnostics.ArchivePaths(loaded, true);
+        Class<?> filePath = Reflect.type(plugin, "com.oplus.seedling.sdk.plugin.SeedlingConstants$PluginFilePath");
+        var path = Reflect.method(filePath, "getPathPlugin", String.class, Context.class);
+        var configured = new LinkedHashSet<String>();
+        for (Context storage : List.of(host, host.createDeviceProtectedStorageContext())) {
+            if (Reflect.call(path, null, storage) instanceof String archive) configured.add(archive);
+        }
+        return new SeedlingSdkDiagnostics.ArchivePaths(List.copyOf(configured), false);
+    }
+
+    private static List<String> loadedSeedlingPaths(ClassLoader plugin) throws ReflectiveOperationException {
+        Class<?> sdk = Reflect.type(plugin, "com.oplus.seedling.sdk.SeedlingSdk");
+        var getter = Reflect.uniqueMethod(sdk, method -> method.getName().equals("getSeedlingPluginClassLoader")
+                && method.getParameterCount() == 0 && ClassLoader.class.isAssignableFrom(method.getReturnType()));
+        var active = (ClassLoader) Reflect.call(getter, Reflect.get(Reflect.field(sdk, "INSTANCE", sdk), null));
+        if (active == null || active == sdk.getClassLoader()) return List.of();
+        return dexFiles(active).stream().map(DexFile::getName).filter(path -> path != null).distinct().toList();
     }
 
     Class<?> unique(String prefix, Predicate<Class<?>> matches) throws ReflectiveOperationException {

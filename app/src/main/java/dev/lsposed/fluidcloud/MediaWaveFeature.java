@@ -30,14 +30,16 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.WeakHashMap;
+import io.github.libxposed.api.XposedInterface;
 
 /** Single shared audio owner for OEM, shade and module-presented capsule views. */
 final class MediaWaveFeature {
     private final HookEntry module;
     private final MediaWaveTrace trace;
     private final Handler main=new Handler(Looper.getMainLooper());
-    private final Field contextField,mediaList,lastPlayer,devices;
-    private final Method playerId,token,packageName,clientUid,sessionId,playerState,playerInterface;
+    private final MediaWaveSource source;
+    private final Field devices;
+    private final Method token,packageName,clientUid,sessionId,playerState,playerInterface;
     private final ArrayList<NativeMediaWave> plugins=new ArrayList<>();
     private final Set<Object> cards=Collections.newSetFromMap(new WeakHashMap<>());
     private final MediaWaveEnvelope envelope=new MediaWaveEnvelope();
@@ -76,11 +78,9 @@ final class MediaWaveFeature {
     MediaWaveFeature(HookEntry module,ClassLoader loader)throws ReflectiveOperationException{
         this.module=module;
         trace=new MediaWaveTrace(module::info);
-        Class<?> controller=Reflect.type(loader,"com.oplus.systemui.media.seedling.livealert.MediaLiveAlertController");
-        Class<?> data=Reflect.type(loader,"com.oplus.systemui.seedlingservice.mediaControl.SeedlingMediaData");
-        contextField=Reflect.field(controller,"sysContext",Context.class);
-        mediaList=Reflect.field(controller,"mediaDataList",List.class);lastPlayer=Reflect.field(controller,"lastStatusBarPlayerId",String.class);
-        playerId=Reflect.method(data,"getPlayerId",String.class);token=data.getMethod("getToken");packageName=Reflect.method(data,"getPackageName",String.class);
+        source=new MediaWaveSource(name->Reflect.type(loader,name));
+        token=source.data.getMethod("getToken");
+        packageName=Reflect.method(source.data,"getPackageName",String.class);
         clientUid=Reflect.method(AudioPlaybackConfiguration.class,"getClientUid",int.class);
         sessionId=Reflect.method(AudioPlaybackConfiguration.class,"getSessionId",int.class);
         playerState=Reflect.method(AudioPlaybackConfiguration.class,"getPlayerState",int.class);
@@ -90,10 +90,25 @@ final class MediaWaveFeature {
         playerInterface=identity;
         devices=Reflect.field(AudioPlaybackConfiguration.class,"mDeviceIds",int[].class);
     }
+    void installLegacySource(){
+        if(source.legacyUpdate==null)return;
+        module.hook(source.legacyUpdate).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain->{
+            Object result=chain.proceed();
+            Object sender=chain.getThisObject();
+            if(Looper.myLooper()==Looper.getMainLooper())legacyMediaChanged(sender);
+            else main.post(()->legacyMediaChanged(sender));
+            return result;
+        });
+    }
+    private void legacyMediaChanged(Object sender){
+        if(owner.get()==sender && (!enabled || blocked))return;
+        try{nativeMediaChanged(sender);}
+        catch(RuntimeException|LinkageError error){unavailable("Legacy media source unavailable");}
+    }
     void nativeMediaChanged(Object value){
         if(Looper.myLooper()!=Looper.getMainLooper()){main.post(()->nativeMediaChanged(value));return;}
         owner=new WeakReference<>(value);
-        if(context==null)context((Context)Reflect.get(contextField,value));
+        if(context==null)context(source.context(value));
         if(enabled){selectMedia();changed();}
     }
     void context(Context value){
@@ -169,14 +184,7 @@ final class MediaWaveFeature {
     }
     private void selectMedia(){
         if(!enabled || !listening)return;
-        Object controller=owner.get();Object chosen=null;
-        if(controller!=null){
-            Object value=Reflect.get(mediaList,controller);String last=(String)Reflect.get(lastPlayer,controller);
-            if(value instanceof List<?> list){
-                for(Object item:list)if(item!=null && last!=null && last.equals(Reflect.call(playerId,item))){chosen=item;break;}
-                if(chosen==null && list.size()==1)chosen=list.getFirst();
-            }
-        }
+        Object controller=owner.get();Object chosen=controller==null?null:source.selected(controller);
         MediaSession.Token next=chosen!=null && Reflect.call(token,chosen) instanceof MediaSession.Token t?t:null;
         if(next!=null && next.equals(destroyed))next=null;
         if(java.util.Objects.equals(next,selected))return;

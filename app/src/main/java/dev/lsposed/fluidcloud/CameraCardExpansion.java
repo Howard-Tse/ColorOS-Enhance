@@ -77,7 +77,7 @@ final class CameraCardExpansion {
                 NativeInstantCameraCard instant = installInstant(loader, nativeCard, hooks);
                 if (!nativeCard.legacy) {
                     try {
-                        glass = new NativeCardGlass(module, () -> module.config.corners().card(), nativeCard.cardType,
+                        glass = new NativeCardGlass(module, () -> module.config.corners().card(), nativeCard,
                                 Reflect.type(loader, NativeCameraCard.VIEWS + "InstantContainer"));
                         glass.install(loader);
                     } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
@@ -154,9 +154,12 @@ final class CameraCardExpansion {
                         safe(() -> nativeCard.align(card, true));
                     return result;
                 }));
-                hooks.add(module.hook(nativeCard.foreground).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
-                    if (!failed && nativeCard.cardType.isInstance(chain.getThisObject()) && enabled()) safe(() ->
-                            nativeCard.beforeDraw((View) chain.getThisObject(), true));
+                // This legacy CardView inherits FrameLayout dispatchDraw. Its camera surfaces
+                // are already reconciled by the container pre-draw callback.
+                if (!nativeCard.alternateLegacy) hooks.add(module.hook(nativeCard.foreground).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
+                    View owner = (View) chain.getThisObject();
+                    if (!failed && nativeCard.cardType.isInstance(owner) && enabled())
+                        safe(() -> nativeCard.beforeDraw(owner, true));
                     // The header is the last child. Native dispatchDraw renders
                     // its own spotlight afterwards, so one highlight spans both.
                     return chain.proceed();

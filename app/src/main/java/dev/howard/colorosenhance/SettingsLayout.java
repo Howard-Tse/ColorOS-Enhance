@@ -11,9 +11,9 @@ public final class SettingsLayout {
             new Page("cloud_notifications","cloud","通知转流体云","应用与渠道、通知种类、收纳和卡片交互","","cloud"),
             new Page("cloud_notification_apps","cloud","逐应用设置","名单、浮窗打开与渠道规则","","cloud_notifications"),
             new Page("cloud_media","cloud","媒体与实时律动","媒体常驻、六频段与采样参数","media","cloud"),
-            new Page("cloud_capsule","cloud","小胶囊与交互","尺寸、圆角、边框、循环切换与点击","capsule","cloud"),
+            new Page("cloud_capsule","cloud","小胶囊与交互","尺寸、位置、圆角、边框、循环切换与点击","capsule","cloud"),
             new Page("cloud_cards","cloud","展开卡片","圆角、摄像头区域展开与背景压暗","camera","cloud"),
-            new Page("cloud_scenes","cloud","场景与方向","状态栏解绑，按场景选择显示方式","scenes","cloud"),
+            new Page("cloud_scenes","cloud","场景与方向","开启状态栏解绑，再按方向配置场景","scenes","cloud"),
             new Page("cloud_portrait","cloud","竖屏场景","全屏、最近任务、下拉与其他场景","scenes","cloud_scenes"),
             new Page("cloud_landscape","cloud","横屏场景","独立配置，或沿用竖屏选择","scenes","cloud_scenes"),
             new Page("icons_visibility","icons","仅下拉后显示","逐项选择时钟、电池与系统图标","icons","icons"),
@@ -33,6 +33,9 @@ public final class SettingsLayout {
     public static boolean known(String route){return "home".equals(route)||page(route)!=null;}
     public static String group(String route){Page page=page(route);return page==null?route:page.group();}
     public static List<Page> children(String route){return PAGES.stream().filter(page->page.parent().equals(route)).toList();}
+    public static boolean isSceneSetupItem(SettingsCatalog.Item item) {
+        return "unbind_status_bar".equals(item.key()) || "landscape_follow_portrait".equals(item.key());
+    }
     public static List<SettingsCatalog.Item> items(Context context,String route){
         Page page=page(route);if(page==null)return List.of();
         SettingsCatalog.Group group=SettingsCatalog.find(page.group(),context);

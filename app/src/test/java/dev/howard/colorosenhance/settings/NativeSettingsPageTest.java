@@ -44,6 +44,24 @@ public class NativeSettingsPageTest {
         state=config(8,false);state.getBundle("values").putBoolean("shade_only.clock",true);f.backend.reply("put",state);
         assertTrue(clock.isChecked());assertFalse(clock.isEnabled());
     }
+    @Test public void sceneSetupStartsWithUnbindAndGroupsItWithBothOrientations() throws Exception {
+        Fixture f = new Fixture("cloud_scenes");
+        f.page.start();
+        f.backend.connected();
+        f.backend.reply("snapshot", config(7, true));
+
+        var first = (PreferenceGroup) f.host.screen.getPreference(0);
+        assertEquals("coloros.pages", first.getKey());
+        assertEquals(4, first.getPreferenceCount());
+        assertEquals("unbind_status_bar", first.getPreference(0).getKey());
+        assertEquals("landscape_follow_portrait", first.getPreference(1).getKey());
+        assertEquals("open_cloud_portrait", first.getPreference(2).getKey());
+        assertEquals("open_cloud_landscape", first.getPreference(3).getKey());
+        String hint = first.getPreference(0).getSummary().toString();
+        assertTrue(hint.contains("重启系统界面"));
+        assertTrue(hint.contains("未配置的场景仍跟随系统"));
+        assertNotNull(f.host.screen.findPreference("preview"));
+    }
     @Test public void sceneInheritanceHidesItsNavigationOnlyAfterSaveAcknowledgment()throws Exception{
         Fixture f=new Fixture("cloud_scenes");f.page.start();f.backend.connected();
         Bundle state=config(7,true);state.getBundle("values").putBoolean("unbind_status_bar",true);f.backend.reply("snapshot",state);

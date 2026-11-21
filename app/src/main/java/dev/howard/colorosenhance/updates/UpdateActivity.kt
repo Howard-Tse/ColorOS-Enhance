@@ -90,10 +90,10 @@ private fun UpdateScreen(activity: UpdateActivity) {
                         }
                     }
                     val release = result?.release()
-                    if (release != null && release.notes().isNotBlank()) item("notes") {
+                    if (release != null && release.hasNotes()) item("notes") {
                         Card(Modifier.fillMaxWidth(), insideMargin = PaddingValues(20.dp)) {
                             Text("版本说明", fontSize = 18.sp)
-                            Text(release.notes(), Modifier.padding(top = 12.dp), fontSize = 14.sp, color = colors.onSurfaceVariantSummary)
+                            ReleaseNotesText(release, Modifier.padding(top = 12.dp))
                         }
                     }
                     item("links") {

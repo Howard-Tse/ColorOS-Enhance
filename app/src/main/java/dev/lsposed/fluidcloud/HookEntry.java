@@ -31,7 +31,12 @@ public final class HookEntry extends XposedModule {
     private SharedPreferences.OnSharedPreferenceChangeListener preferenceListener;
 
     @Override public void onModuleLoaded(ModuleLoadedParam param) {
-        if (!dev.howard.colorosenhance.migration.PackageActivation.allowed(() -> getRemotePreferences("integration"))) return;
+        if (!dev.howard.colorosenhance.migration.PackageActivation.allowed(() -> getRemotePreferences("integration"))) {
+            if (!param.isSystemServer() && SYSTEM_UI.equals(param.getProcessName())) {
+                info("SystemUI scope loaded, but module activation is not ready; check initialization or migration");
+            }
+            return;
+        }
         systemServer = param.isSystemServer();
         allowed = !systemServer && SYSTEM_UI.equals(param.getProcessName());
     }
@@ -77,7 +82,9 @@ public final class HookEntry extends XposedModule {
             error("Unsupported SystemUI adapter; native behavior retained", error);
         }
         try {
-            mediaWaves = new MediaWaveFeature(this, param.getClassLoader());
+            MediaWaveFeature waves = new MediaWaveFeature(this, param.getClassLoader());
+            waves.installLegacySource();
+            mediaWaves = waves;
             report(DiagnosticPoint.MEDIA_WAVE, DiagnosticPoint.State.INSTALLED);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
             report(DiagnosticPoint.MEDIA_WAVE, DiagnosticPoint.State.UNSUPPORTED);

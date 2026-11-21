@@ -157,7 +157,7 @@ final class PresentationWindow {
             previousTouch.set(touch);
             touchBoundary.rewind();rawTouch.getBoundaryPath(touchBoundary);touchBoundary.transform(geometry.forward());
             RectF bounds=geometry.bounds();
-            CloudCorners.path(touchClip,bounds,cornerRadius(bounds,style),style.continuous());
+            CloudCorners.path(touchClip,bounds,corners(bounds,style),style.continuous());
             viewport.set(0,0,width,height);touchMask.setPath(touchClip,viewport);
             touch.setPath(touchBoundary,touchMask);
             maskedGeometry=geometry;maskedCorners=style;maskedWidth=width;maskedHeight=height;maskedDensity=density;
@@ -182,11 +182,12 @@ final class PresentationWindow {
         return frame.pose()==null?CapsulePresentationGeometry.resolve(capsuleBounds,anchor,frame.fraction())
                 :CapsulePresentationGeometry.resolve(capsuleBounds,source.profile(view,anchor),frame.pose());
     }
-    private float cornerRadius(RectF bounds,CloudCorners.Style style) {
-        float max=Math.min(bounds.width(),bounds.height())/2f;
-        if(!style.enabled())return max;
-        float target=style.radius(view.getResources().getDisplayMetrics().density,bounds.width(),bounds.height());
-        return max+(target-max)*geometry.fraction();
+    private CloudCorners.Axes corners(RectF bounds,CloudCorners.Style style) {
+        float width = bounds.width(), height = bounds.height();
+        float pill = Math.min(width, height) / 2f;
+        if(!style.enabled())return new CloudCorners.Axes(pill, pill);
+        return CloudCorners.Axes.capsule(style.requested(view.getResources().getDisplayMetrics().density), width, height)
+                .fromPill(width, height, geometry.fraction());
     }
     void request(CloudPresentationCoordinator.Owner next,CloudPresentationCoordinator.Ticket ticket,Runnable committed){
         if(disposed)return;
@@ -278,10 +279,11 @@ final class PresentationWindow {
                 if(morph){
                     int clipSave=canvas.save();
                     RectF bounds=geometry.bounds();
-                    CloudCorners.Style style=corners.get();float radius=cornerRadius(bounds,style);
-                    CloudCorners.path(animationClip,bounds,radius,style.continuous());
+                    CloudCorners.Style style=corners.get();
+                    CloudCorners.Axes axes=corners(bounds,style);
+                    CloudCorners.path(animationClip,bounds,axes,style.continuous());
                     canvas.clipPath(animationClip);
-                    boolean nativeParts=frame.pose()!=null && source.drawMorph(canvas,view,geometry,style.enabled()?radius:-1f);
+                    boolean nativeParts=frame.pose()!=null && source.drawMorph(canvas,view,geometry,style.enabled()?axes:null);
                     if(!nativeParts){
                         canvas.drawPath(animationClip,black);
                         canvas.saveLayerAlpha(bounds,Math.round(255*geometry.contentAlpha()));

@@ -58,6 +58,7 @@ final class NativeCameraCard {
     private record Decorations(CardHeaderDrawable background, CardHeaderDrawable foreground) { }
     private record MaterialOutline(android.view.ViewOutlineProvider provider, Rect mask, int width, int height) { }
     private record External(int inset, Rect camera) { }
+    final boolean alternateLegacy;
     record Plan(float translationY, int inset) { }
     record Morph(Rect mask, float translationY) { }
 
@@ -72,14 +73,16 @@ final class NativeCameraCard {
         this.geometryOverride = geometryOverride;
         containerType = lookup.load(VIEWS + "CardContainer");
         cardType = lookup.load(VIEWS + "CardView");
+        alternateLegacy = ColorOs16Plugin.cards(cardType);
         Class<?> root; boolean old;
-        try { root = lookup.load(VIEWS + "e"); old = false; }
+        if (alternateLegacy) { root = lookup.load(ColorOs16Plugin.CARD_ROOT); old = true; }
+        else try { root = lookup.load(VIEWS + "e"); old = false; }
         catch (ClassNotFoundException missing) { root = lookup.load("i5.d"); old = true; }
         legacy = old; rootType = root;
         if (!ViewGroup.class.isAssignableFrom(containerType) || !FrameLayout.class.isAssignableFrom(cardType)
                 || !FrameLayout.class.isAssignableFrom(rootType)) throw new NoSuchMethodException("Card view types");
-        capsuleRect = Reflect.field(rootType, legacy ? "s" : "h", Rect.class);
-        content = Reflect.field(cardType, legacy ? "s" : "i", View.class);
+        capsuleRect = Reflect.field(rootType, alternateLegacy ? "r" : legacy ? "s" : "h", Rect.class);
+        content = Reflect.field(cardType, alternateLegacy ? "r" : legacy ? "s" : "i", View.class);
         layout = Reflect.method(containerType, legacy ? "i" : "k", void.class);
         centers = Reflect.method(containerType, "getItemViewsCenter", List.class);
         Reflect.method(rootType, "getCardStartLocation", int.class);
@@ -91,7 +94,8 @@ final class NativeCameraCard {
         cardLayout = Reflect.method(cardType, "onLayout", void.class, boolean.class, int.class, int.class, int.class, int.class);
         intrinsicHeight = Reflect.method(cardType, "getIntrinsicHeight", int.class);
         blurBounds = Reflect.method(cardType, "setLeftTopRightBottomForBlur", void.class, Rect.class);
-        Class<?> outlineType = lookup.load(legacy ? "j6.h" : "com.oplus.systemui.plugins.common.util.j");
+        Class<?> outlineType = lookup.load(alternateLegacy ? ColorOs16Plugin.CARD_OUTLINE
+                : legacy ? "j6.h" : "com.oplus.systemui.plugins.common.util.j");
         if (!android.view.ViewOutlineProvider.class.isAssignableFrom(outlineType)) outlineType = PluginClasses.outline(cardType);
         Field rect;
         try{rect=Reflect.field(outlineType,legacy?"c":"a",Rect.class);}
@@ -107,7 +111,7 @@ final class NativeCameraCard {
         try{update=Reflect.method(rootType,legacy?"e":"d",void.class);}
         catch(NoSuchMethodException changed){update=Reflect.signature(rootType,void.class,String.class);}
         rootUpdate=update;
-        windowAdd = Reflect.method(lookup.load(legacy ? "l5.h"
+        windowAdd = Reflect.method(lookup.load(alternateLegacy ? ColorOs16Plugin.CARD_WINDOW : legacy ? "l5.h"
                 : "com.oplus.systemui.plugins.seedling.card.window.i"), "a", void.class, boolean.class);
         windowRoot = Reflect.field(windowAdd.getDeclaringClass(), legacy ? "f" : "g", rootType);
         Class<?> media;
@@ -232,12 +236,16 @@ final class NativeCameraCard {
         adjustContent(card, enabled && position != null && index == 0 ? position.inset() : 0);
     }
     int intrinsicHeight(View card, int nativeHeight, boolean enabled) {
-        if (!enabled || nativeHeight <= 0 || !cardType.isInstance(card)) return nativeHeight;
+        if (!enabled || nativeHeight <= 0) return nativeHeight;
+        return Math.addExact(nativeHeight, cameraContentInset(card));
+    }
+    int cameraContentInset(View card) {
+        if (margins.isEmpty() || !cardType.isInstance(card)) return 0;
         View body = (View) Reflect.get(content, card);
         Margin margin = margins.get(body);
         if (body == null || margin == null || !(body.getLayoutParams() instanceof FrameLayout.LayoutParams params)
-                || params.topMargin != margin.appliedTop()) return nativeHeight;
-        return Math.addExact(nativeHeight, margin.appliedTop() - margin.nativeTop());
+                || params.topMargin != margin.appliedTop()) return 0;
+        return margin.appliedTop() - margin.nativeTop();
     }
     private int itemPosition(Object container, View card) {
         int index = (int) Reflect.call(adapterPosition, container, card);

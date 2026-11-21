@@ -6,6 +6,7 @@ import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
 import dev.howard.colorosenhance.diagnostics.DiagnosticPoint;
+import dev.howard.colorosenhance.diagnostics.SeedlingSdkDiagnostics;
 import io.github.libxposed.api.XposedInterface;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -50,6 +51,11 @@ final class CloudExtras {
         for(int i=0;i<view.getChildCount();i++){
             View root=view.getChildAt(i);
             if(!root.getClass().getName().equals(NativeCapsuleAppearance.VIEWS+"CapsuleContainerRoot"))continue;
+            try {
+                SeedlingSdkDiagnostics.attach(view.getContext(), root.getClass().getClassLoader(), PluginClasses::seedlingPaths);
+            } catch (RuntimeException | LinkageError unavailable) {
+                module.info("SystemUI Seedling SDK diagnostic endpoint unavailable");
+            }
             if (module.notificationCloud != null) try { module.notificationCloud.context(root, view.getContext()); }
             catch (RuntimeException | LinkageError unavailable) { module.info("Notification source unavailable; capsule enhancements remain active"); }
             Session existing=null;
@@ -69,6 +75,7 @@ final class CloudExtras {
         final ArrayList<XposedInterface.HookHandle> hooks=new ArrayList<>();
         NativeCapsuleAppearance appearance;
         NativeCapsuleSize size;
+        NativeCapsulePosition position;
         NativeCapsuleForeground foreground;
         NativeCardOrder order;
         NativeCardDim dim;
@@ -108,7 +115,7 @@ final class CloudExtras {
                                 appearance.stroke(chain.getThisObject(),hideStroke);
                             });return result;
                         }));
-                hooks.add(module.hook(appearance.colorChanged).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain->{
+                if(appearance.colorChanged!=null)hooks.add(module.hook(appearance.colorChanged).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain->{
                     Object result=chain.proceed();safe(()->appearance.stroke(appearance.colorOwner(chain.getThisObject()),!closing&&module.config.hideCapsuleStroke()));return result;
                 }));
                 hooks.add(module.hook(appearance.moons).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain->{
@@ -134,6 +141,10 @@ final class CloudExtras {
                 }));
                 module.info("Native capsule size controls installed");
             }catch(ReflectiveOperationException|RuntimeException|LinkageError error){rollback(start);size=null;module.error("Capsule sizing unavailable; native bounds retained",error);}
+            try { position = new NativeCapsulePosition(lookup); }
+            catch (ClassNotFoundException | RuntimeException | LinkageError unavailable) {
+                module.error("Capsule position controls unavailable; native placement retained", unavailable);
+            }
             start=hooks.size();
             try{
                 boolean legacy=appearance!=null?appearance.legacy:legacy(lookup);
@@ -225,6 +236,7 @@ final class CloudExtras {
             }catch(ReflectiveOperationException|RuntimeException|LinkageError error){rollback(start);if(order!=null)order.close();order=null;module.error("Card priority controls unavailable; native order retained",error);}
         }
         private boolean legacy(NativeCapsuleAppearance.Lookup lookup)throws ClassNotFoundException{
+            if (ColorOs16Plugin.capsule(lookup.load(NativeCapsuleAppearance.VIEWS+"CapsuleContainer"))) return true;
             try{lookup.load("com.oplus.systemui.plugins.seedling.capsule.ui.viewmodel.u");return false;}
             catch(ClassNotFoundException missing){lookup.load("a5.q");return true;}
         }
@@ -232,6 +244,7 @@ final class CloudExtras {
             if(foreground!=null)safe(foreground::refresh);
             if(dismissal!=null)safe(dismissal::refresh);
             if(size!=null)for(View root:new ArrayList<>(roots))safe(()->size.refresh(root,closing?CapsuleSize.OEM:module.config.capsuleSize()));
+            if(position!=null)for(View root:new ArrayList<>(roots))safe(()->position.refresh(root,module.config.capsulePosition()));
             if(order!=null){safe(()->order.selection(root));order.schedule();}
             if(appearance!=null)safe(()->appearance.restoreDisabled(!closing&&module.config.hideCapsuleStroke(),!closing&&module.config.hideCapsuleArrows()));
             if(appearance!=null)for(View root:new ArrayList<>(roots))safe(()->appearance.refresh(root,
@@ -245,9 +258,10 @@ final class CloudExtras {
                 if(ancestor==root){order.selection(view);return;}
         }
         void close(){closing=true;
+            SeedlingSdkDiagnostics.detach(loader);
             if(foreground!=null)safe(foreground::refresh);
             if(dismissal!=null)dismissal.close();
-            if(order!=null)order.close();if(size!=null)size.close();
+            if(order!=null)order.close();if(size!=null)size.close();if(position!=null)position.close();
             if(root.getViewTreeObserver().isAlive())root.getViewTreeObserver().removeOnGlobalLayoutListener(waveLayout);
             if(module.mediaWaves!=null)module.mediaWaves.removePlugin(wave);
             if(appearance!=null)safe(appearance::restore);if(dim!=null)safe(()->dim.refresh(false,0));rollback(0);}

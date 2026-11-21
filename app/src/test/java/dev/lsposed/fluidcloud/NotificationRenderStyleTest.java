@@ -1,8 +1,15 @@
 package dev.lsposed.fluidcloud;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.AnimatorSet;
+import android.animation.ValueAnimator;
 import android.app.Notification;
 import android.app.PendingIntent;
 import android.content.Intent;
+import android.os.Bundle;
+import android.os.Looper;
+import android.widget.TextView;
 import dev.howard.colorosenhance.notifications.NotificationCloudRules;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -36,6 +43,42 @@ public class NotificationRenderStyleTest {
         assertEquals(140, segment.getInt("endValue"));
         assertEquals(200, segment.getInt("duration"));
         assertNull(NativeNotificationCapsule.boundedAnimation("[{\"startValue\":110,\"endValue\":130}]", 140));
+    }
+
+    @Test public void sameCappedWidthStillCommitsEachNewCaptionWithoutAWidthTransition() {
+        var caption = new TextView(RuntimeEnvironment.getApplication());
+        caption.setText("↓ 1 KB/s");
+        int tag = dev.howard.colorosenhance.R.drawable.ic_notification_cloud;
+        var params = new Bundle();
+        params.putInt("type", 0);
+        params.putInt("animObjTag", tag);
+        params.putString("animValue", "[{\"startValue\":226,\"endValue\":240,\"duration\":200}]");
+        for (String next : java.util.List.of("↓ 18 KB/s", "↓ 43 KB/s")) {
+            var content = ValueAnimator.ofFloat(0f, 1f);
+            content.setDuration(200L);
+            var update = new AnimatorSet();
+            update.playTogether(content);
+            update.addListener(new AnimatorListenerAdapter() {
+                @Override public void onAnimationEnd(Animator animation) { caption.setText(next); }
+            });
+            caption.setTag(tag, update);
+            assertNull(NativeNotificationCapsule.constrainWidthAnimation(params, 140, caption));
+            assertEquals(0L, update.getDuration());
+            org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(32));
+            assertEquals(next, caption.getText().toString());
+        }
+    }
+
+    @Test public void sameCappedWidthWithoutATaggedAnimatorStillReachesTheNativeCallback() throws Exception {
+        var params = new Bundle();
+        params.putInt("type", 0);
+        params.putString("animValue", "[{\"startValue\":226,\"endValue\":240,\"duration\":200}]");
+        Bundle capped = NativeNotificationCapsule.constrainWidthAnimation(params, 140, null);
+        assertNotSame(params, capped);
+        var segment = new org.json.JSONArray(capped.getString("animValue")).getJSONObject(0);
+        assertEquals(140, segment.getInt("startValue"));
+        assertEquals(140, segment.getInt("endValue"));
+        assertSame(params, NativeNotificationCapsule.constrainWidthAnimation(params, Integer.MAX_VALUE, null));
     }
 
     @Test public void capsuleCaptionOverrideUsesTheRenderCopyAndRestoresItsOriginalExtras() throws Throwable {

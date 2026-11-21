@@ -23,7 +23,7 @@ public class SettingsCatalogCloudTest {
     @Test public void cloudCatalogContainsThreeScenePairsWithOemDefaults() {
         SettingsCatalog.Group cloud = SettingsCatalog.find("cloud");
         assertNotNull(cloud);
-        assertEquals(List.of("notification_cloud_enabled", "notification_popup_seconds", "notification_capsule_max_dp", "keep_paused_music", "media_card_in_shade", "realtime_media_wave", "wave_interval_ms", "wave_sensitivity", "wave_attack_ms", "wave_release_ms", "wave_hold_paused", "capsule_size_enabled", "capsule_height_percent", "hide_capsule_stroke", "hide_capsule_arrows",
+        assertEquals(List.of("notification_cloud_enabled", "notification_popup_seconds", "notification_capsule_max_dp", "keep_paused_music", "media_card_in_shade", "realtime_media_wave", "wave_interval_ms", "wave_sensitivity", "wave_attack_ms", "wave_release_ms", "wave_hold_paused", "capsule_size_enabled", "capsule_height_percent", "capsule_offset_x_dp", "capsule_offset_y_dp", "hide_capsule_stroke", "hide_capsule_arrows",
                 "capsule_corners_enabled", "capsule_continuous_corners", "capsule_keep_in_foreground", "skip_empty_capsule", "block_capsule_click_top", "selected_card_first", "camera_card_expansion", "card_dim_enabled",
                 "card_corners_enabled", "card_continuous_corners", "unbind_status_bar", "capsule_on_top", "capsule_keep_during_launch", "fullscreen", "fullscreen_animation",
                 "recents", "recents_shrink", "shade_keep", "shade_collapse_on_open", "other_keep", "other_animation",
@@ -32,6 +32,22 @@ public class SettingsCatalogCloudTest {
                 cloud.items().stream().map(SettingsCatalog.Item::key).toList());
         assertEquals(List.of("capsule_keep_during_launch"),
                 cloud.items().stream().filter(SettingsCatalog.Item::defaultFlag).map(SettingsCatalog.Item::key).toList());
+    }
+
+    @Test public void capsulePositionAndExpandedCornerLimitsUseTheSharedNumberSettings() {
+        var enabled = Map.<String, Object>of("enabled", true);
+        for (String key : List.of("capsule_offset_x_dp", "capsule_offset_y_dp")) {
+            var offset = item(key);
+            assertTrue(offset.valueOnly());
+            assertEquals(0, offset.valueDefault());
+            assertTrue(SettingsCatalog.controlEnabled("cloud", key, enabled));
+            assertTrue(SettingsCoordinator.validValue("cloud", key, offset.min()));
+            assertTrue(SettingsCoordinator.validValue("cloud", key, offset.max()));
+            assertFalse(SettingsCoordinator.validValue("cloud", key, offset.min() - 1));
+        }
+        assertEquals(96, item("card_corners_enabled").max());
+        assertTrue(SettingsCoordinator.validValue("cloud", "card_corner_dp", 96));
+        assertFalse(SettingsCoordinator.validValue("cloud", "card_corner_dp", 97));
     }
 
     @Test public void capsuleDimensionsShareNumericInputAndDefaultResetContracts() {
@@ -65,6 +81,33 @@ public class SettingsCatalogCloudTest {
             assertFalse(SettingsCatalog.controlEnabled("cloud",key,values));
         assertTrue(SettingsCatalog.controlEnabled("cloud","shade_keep",Map.of("enabled",true,"unbind_status_bar",true)));
         assertFalse(SettingsCatalog.controlEnabled("cloud","keep_paused_music",Map.of()));
+    }
+
+    @Test public void notificationConversionControlsRespectTheirOwnSwitchAndTheCloudMaster() {
+        String conversion = "notification_cloud_enabled";
+        var parameters = List.of("notification_popup_seconds", "notification_capsule_max_dp");
+        assertEquals("cloud", SettingsLayout.group("cloud_notifications"));
+        assertEquals(List.of(conversion, parameters.get(0), parameters.get(1)),
+                SettingsLayout.items(null, "cloud_notifications").stream().map(SettingsCatalog.Item::key).toList());
+        assertTrue(SettingsCatalog.controlEnabled("cloud", conversion, Map.of("enabled", true)));
+
+        for (boolean cloudEnabled : new boolean[]{false, true}) {
+            for (boolean unbind : new boolean[]{false, true}) {
+                for (boolean converting : new boolean[]{false, true}) {
+                    var values = Map.<String,Object>of("enabled", cloudEnabled,
+                            "unbind_status_bar", unbind, conversion, converting);
+                    assertEquals("Conversion switch with " + values, cloudEnabled,
+                            SettingsCatalog.controlEnabled("cloud", conversion, values));
+                    for (String key : parameters) {
+                        assertEquals("Editable " + key + " with " + values, cloudEnabled && converting,
+                                SettingsCatalog.controlEnabled("cloud", key, values));
+                        assertEquals(converting, item(key).visible(values));
+                    }
+                    assertEquals(cloudEnabled && unbind,
+                            SettingsCatalog.controlEnabled("cloud", "shade_keep", values));
+                }
+            }
+        }
     }
 
     @Test public void animationRowsAppearOnlyWhenKeepIsOffAndSummaryUsesThreeModes() {

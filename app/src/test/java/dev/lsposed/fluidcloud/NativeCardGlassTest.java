@@ -12,6 +12,26 @@ import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class) @Config(sdk=36, application=android.app.Application.class)
 public class NativeCardGlassTest {
+    @Test public void shortCardsMakeRoomForLargerCircularCornersWithinTheirMeasureSpec() {
+        int atMost = View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.AT_MOST);
+        int constrained = View.MeasureSpec.makeMeasureSpec(100, View.MeasureSpec.AT_MOST);
+        int fixed = View.MeasureSpec.makeMeasureSpec(84, View.MeasureSpec.EXACTLY);
+        assertEquals(84, CloudCorners.compactCardHeight(84, 300, atMost, 40, 0));
+        assertEquals(100, CloudCorners.compactCardHeight(84, 300, atMost, 50, 0));
+        assertEquals(128, CloudCorners.compactCardHeight(84, 300, atMost, 64, 0));
+        assertEquals(100, CloudCorners.compactCardHeight(84, 300, constrained, 64, 0));
+        assertEquals(84, CloudCorners.compactCardHeight(84, 300, fixed, 64, 0));
+        assertEquals(96, CloudCorners.compactCardHeight(84, 96, atMost, 64, 0));
+    }
+
+    @Test public void cameraHeaderCountsTowardTheOuterCornerHeightWithoutShrinkingContent() {
+        int atMost = View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.AT_MOST);
+        assertEquals(128, 28 + CloudCorners.compactCardHeight(84, 300, atMost, 64, 28));
+        assertEquals(128, 44 + CloudCorners.compactCardHeight(84, 300, atMost, 64, 44));
+        assertEquals(140, 56 + CloudCorners.compactCardHeight(84, 300, atMost, 64, 56));
+        int constrained = View.MeasureSpec.makeMeasureSpec(90, View.MeasureSpec.AT_MOST);
+        assertEquals(118, 28 + CloudCorners.compactCardHeight(84, 300, constrained, 64, 28));
+    }
     @Test public void reusedGlassKeepsItsStockProfileAcrossRadiusAndCurveChanges() throws Exception {
         var glass = new NativeCardGlass.Materials();
         var drawable = new ColorDrawable();

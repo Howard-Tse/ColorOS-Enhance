@@ -4,6 +4,7 @@ import android.graphics.Canvas;
 import android.graphics.Outline;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -21,19 +22,24 @@ final class NativeCardGlass {
     private static final String TEMPLATE = "com.oplus.systemui.plugins.shared.template.";
     private final HookEntry module;
     private final Supplier<CloudCorners.Style> currentStyle;
+    private final NativeCameraCard cameraCards;
     private final Class<?> card, instant;
     private final Set<ClassLoader> attempted = Collections.newSetFromMap(new WeakHashMap<>());
     private final Set<View> outlineHosts = Collections.newSetFromMap(new WeakHashMap<>());
     private final Set<View> sharedPages = Collections.newSetFromMap(new WeakHashMap<>());
+    private final WeakHashMap<View, AnchorGravity> centered = new WeakHashMap<>();
     private final Materials materials = new Materials();
     private final ArrayList<XposedInterface.HookHandle> hooks = new ArrayList<>();
     private boolean closed;
     private NativeTemplateStroke sharedStroke;
+    private record AnchorGravity(FrameLayout.LayoutParams params, int original, int applied) { }
 
-    NativeCardGlass(HookEntry module, Supplier<CloudCorners.Style> currentStyle, Class<?> card, Class<?> instant) {
+    NativeCardGlass(HookEntry module, Supplier<CloudCorners.Style> currentStyle, NativeCameraCard cameraCards,
+                    Class<?> instant) {
         this.module = module;
         this.currentStyle = currentStyle;
-        this.card = card;
+        this.cameraCards = cameraCards;
+        this.card = cameraCards.cardType;
         this.instant = instant;
     }
 
@@ -148,7 +154,9 @@ final class NativeCardGlass {
         // SystemUI can use a Seedling loader distinct from the plugin manager exposed to clients.
         if (sharedPages.contains(view)) refreshSharedStroke(view);
         String name = view.getClass().getName();
-        if (name.startsWith("v6.") || name.startsWith("com.oplus.ule.lite.")) {
+        View anchor = view.getClass().getClassLoader() != View.class.getClassLoader() ? cardAnchor(view) : null;
+        if (anchor != null || name.startsWith("v6.") || name.startsWith("com.oplus.ule.lite.")) {
+            if (anchor != null && (currentStyle.get().enabled() || centered.containsKey(anchor))) view.requestLayout();
             installSdk(view.getClass().getClassLoader());
             return;
         }
@@ -158,6 +166,7 @@ final class NativeCardGlass {
 
     private synchronized void installSdk(ClassLoader sdk) {
         if (closed || !attempted.add(sdk)) return;
+        installSdkPart("compact template sizing", () -> installCompactSizing(sdk));
         installSdkPart("glass", () -> installSdkGlass(sdk));
         SdkChrome chrome;
         try { chrome = SdkChrome.resolve(sdk); }
@@ -168,6 +177,79 @@ final class NativeCardGlass {
         installSdkPart("stroke", () -> installSdkStroke(chrome));
         installSdkPart("outline", () -> installOutline(chrome));
         installSdkPart("COE", () -> installCoe(sdk, chrome));
+    }
+
+    private void installCompactSizing(ClassLoader sdk) throws ReflectiveOperationException {
+        Class<?> anchorLayout;
+        try {
+            anchorLayout = Reflect.type(sdk, "q7.a");
+            if (!anchorSizedLayout(anchorLayout)) throw new NoSuchMethodException(anchorLayout.getName());
+        } catch (ReflectiveOperationException moved) {
+            anchorLayout = PluginClasses.of(Reflect.type(sdk, "t7.f0")).unique("q7.", NativeCardGlass::anchorSizedLayout);
+        }
+        Method measure = anchorLayout.getDeclaredMethod("onMeasure", int.class, int.class);
+        hooks.add(module.hook(measure).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
+            Object result = chain.proceed();
+            View root = (View) chain.getThisObject();
+            CloudCorners.Style style = currentStyle.get();
+            if (!style.enabled() && centered.isEmpty()) return result;
+            View anchor = cardAnchor(root);
+            if (anchor == null) return result;
+            int heightSpec = (int) chain.getArg(1);
+            int initial = root.getMeasuredHeight();
+            View owner = style.enabled() ? expandedCard(root) : null;
+            int height = owner != null
+                    ? CloudCorners.compactCardHeight(initial, root.getMeasuredWidth(), heightSpec,
+                            style.requested(root.getResources().getDisplayMetrics().density),
+                            cameraCards.cameraContentInset(owner))
+                    : initial;
+            if (height == initial) {
+                center(anchor, false);
+                return result;
+            }
+            Object resized = chain.proceed(new Object[]{chain.getArg(0),
+                    View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY)});
+            center(anchor, root.getMeasuredHeight() > initial);
+            return resized;
+        }));
+    }
+
+    private static boolean anchorSizedLayout(Class<?> type) {
+        return FrameLayout.class.isAssignableFrom(type)
+                && PluginClasses.has(type, void.class, int.class, int.class)
+                && PluginClasses.has(type, void.class, View.class, int.class, int.class)
+                && PluginClasses.has(type, void.class, String.class, int.class, int.class);
+    }
+
+    private static View cardAnchor(View view) {
+        if (!(view instanceof ViewGroup root)) return null;
+        View anchor = null;
+        boolean background = false, stroke = false;
+        for (int i = 0; i < root.getChildCount(); i++) {
+            View child = root.getChildAt(i);
+            Object tag = child.getTag();
+            if ("expandedView".equals(tag)) anchor = child;
+            else if ("cardBackground".equals(tag)) background = true;
+            else if ("cardStroke".equals(tag)) stroke = true;
+        }
+        return background && stroke && anchor != null && anchor.getVisibility() != View.GONE
+                && anchor.getLayoutParams() instanceof FrameLayout.LayoutParams params
+                && params.height == ViewGroup.LayoutParams.WRAP_CONTENT ? anchor : null;
+    }
+
+    private void center(View anchor, boolean enabled) {
+        AnchorGravity previous = centered.remove(anchor);
+        if (previous != null && previous.params().gravity == previous.applied()) previous.params().gravity = previous.original();
+        if (!enabled || !(anchor.getLayoutParams() instanceof FrameLayout.LayoutParams params)) return;
+        int original = params.gravity;
+        int applied = centeredGravity(original);
+        centered.put(anchor, new AnchorGravity(params, original, applied));
+        params.gravity = applied;
+    }
+
+    private static int centeredGravity(int original) {
+        int gravity = original == -1 ? Gravity.START : original;
+        return (gravity & ~Gravity.VERTICAL_GRAVITY_MASK) | Gravity.CENTER_VERTICAL;
     }
 
     private interface Install { void run() throws ReflectiveOperationException; }
@@ -351,9 +433,13 @@ final class NativeCardGlass {
     }
 
     private boolean inExpandedCard(View view) {
+        return expandedCard(view) != null;
+    }
+
+    private View expandedCard(View view) {
         for (View node = view; node != null; node = node.getParent() instanceof View parent ? parent : null)
-            if (card.isInstance(node) || instant.isInstance(node)) return true;
-        return false;
+            if (card.isInstance(node) || instant.isInstance(node)) return node;
+        return null;
     }
 
     interface Surface {
@@ -406,6 +492,10 @@ final class NativeCardGlass {
         }
         outlineHosts.clear();
         sharedPages.clear();
+        for (View anchor : new ArrayList<>(centered.keySet())) if (anchor != null) {
+            center(anchor, false);
+            anchor.requestLayout();
+        }
         if (sharedStroke != null) {
             try { sharedStroke.restore(); }
             catch (IllegalAccessException | RuntimeException failure) {

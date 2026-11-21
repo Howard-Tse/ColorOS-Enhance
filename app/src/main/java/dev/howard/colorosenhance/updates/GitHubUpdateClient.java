@@ -30,7 +30,7 @@ public final class GitHubUpdateClient {
             connection.setReadTimeout(10000);
             connection.setInstanceFollowRedirects(false);
             connection.setUseCaches(false);
-            connection.setRequestProperty("Accept", "application/vnd.github+json");
+            connection.setRequestProperty("Accept", "application/vnd.github.full+json");
             connection.setRequestProperty("X-GitHub-Api-Version", "2022-11-28");
             connection.setRequestProperty("User-Agent", "ColorOS-Enhance-UpdateCheck");
             int status = connection.getResponseCode();

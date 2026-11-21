@@ -55,7 +55,7 @@ public class LaunchUpdateCheckTest {
         check=new LaunchUpdateCheck(task->{throw new java.util.concurrent.RejectedExecutionException();},main,()->null,69,()->fail("No error popup"));
         check.foreground();check.check();assertNull(check.pending());
     }
-    static ReleaseInfo release(long code) { return new ReleaseInfo(code,"1.31.0","Notes",ReleaseInfo.RELEASES_URL,""); }
+    static ReleaseInfo release(long code) { return new ReleaseInfo(code,"1.31.0","Notes","",ReleaseInfo.RELEASES_URL,""); }
     static class Queue extends ArrayDeque<Runnable> implements Executor {
         public void execute(Runnable task){add(task);}
         void run(){remove().run();}

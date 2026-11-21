@@ -40,6 +40,8 @@ public final class DiagnosticReporter {
 
     private DiagnosticReporter() { }
 
+    static void execute(Runnable task) { worker.execute(task); }
+
     public static synchronized void report(DiagnosticPoint point, DiagnosticPoint.State state) {
         long now = SystemClock.elapsedRealtime();
         Signal previous = last.get(point);

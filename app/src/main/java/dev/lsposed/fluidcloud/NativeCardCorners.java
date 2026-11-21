@@ -24,7 +24,7 @@ final class NativeCardCorners {
     void install(HookEntry module, ClassLoader loader, NativeCameraCard cards, View pluginRoot,
                  ArrayList<XposedInterface.HookHandle> hooks) throws ReflectiveOperationException {
         instantType = Reflect.type(loader, NativeCameraCard.VIEWS + "InstantContainer");
-        if (cards.legacy) installLegacyBlur(module, loader, hooks);
+        if (cards.legacy) installLegacyBlur(module, loader, cards.alternateLegacy, hooks);
         else installCornerConfig(module, loader, cards, pluginRoot, hooks);
     }
 
@@ -78,12 +78,12 @@ final class NativeCardCorners {
         }));
     }
 
-    private void installLegacyBlur(HookEntry module, ClassLoader loader,
+    private void installLegacyBlur(HookEntry module, ClassLoader loader, boolean alternate,
                                    ArrayList<XposedInterface.HookHandle> hooks) throws ReflectiveOperationException {
         Class<?> manager = Reflect.type(loader, "com.oplus.view.ViewRootManager");
         Class<?> background = Reflect.type(loader, NativeCameraCard.VIEWS + "CardBackgroundView");
         Method radius = Reflect.method(manager, "setCornerRadius", void.class, float.class);
-        Method setup = Reflect.method(Reflect.type(loader, "j6.d"), "b", void.class,
+        Method setup = Reflect.method(Reflect.type(loader, alternate ? "t5.e" : "j6.d"), "b", void.class,
                 Context.class, View.class, manager);
         module.deoptimize(Reflect.method(background,"onAttachedToWindow",void.class));
         module.deoptimize(Reflect.method(instantType,"s",void.class));

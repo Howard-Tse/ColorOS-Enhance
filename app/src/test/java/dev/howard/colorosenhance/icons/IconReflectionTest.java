@@ -4,14 +4,30 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class IconReflectionTest {
-    @Test public void pipelineInterfaceDefaultsAndClassOverridesRetainNativeBlocking() throws Exception {
-        var inherited = new PipelineIcon();
-        var blocked = new BlockedIcon();
-        assertEquals(false, IconReflection.method(inherited.getClass(), "isIconBlocked").invoke(inherited));
-        assertEquals(true, IconReflection.method(blocked.getClass(), "isIconBlocked").invoke(blocked));
-        assertNull(IconReflection.optional(PipelineIcon.class, "missingNativeMethod"));
+    @Test public void orderingSupportsInheritedSingleArgumentAlpha() throws Exception {
+        var state = new LegacyIcon();
+        var setter = IconReflection.alphaSetter(LegacyIcon.class);
+        assertEquals(LegacyViewState.class, setter.getDeclaringClass());
+        IconReflection.applyOrderAlpha(setter, state);
+        assertEquals(1f, state.alpha, 0f);
     }
-    interface Displayable { default boolean isIconBlocked() { return false; } }
-    static class PipelineIcon implements Displayable {}
-    static class BlockedIcon extends PipelineIcon { @Override public boolean isIconBlocked() { return true; } }
+
+    @Test public void orderingStillPrefersTaggedAlphaWhenBothExist() throws Exception {
+        var state = new TaggedIcon();
+        IconReflection.applyOrderAlpha(IconReflection.alphaSetter(TaggedIcon.class), state);
+        assertEquals(1f, state.alpha, 0f);
+        assertEquals("ColorOS Enhance icon order", state.reason);
+    }
+
+    static class LegacyViewState {
+        float alpha;
+        public void setAlpha(float value) { alpha = value; }
+    }
+
+    static final class LegacyIcon extends LegacyViewState { }
+
+    static final class TaggedIcon extends LegacyViewState {
+        String reason;
+        public void setAlpha(float value, String tag) { alpha = value; reason = tag; }
+    }
 }

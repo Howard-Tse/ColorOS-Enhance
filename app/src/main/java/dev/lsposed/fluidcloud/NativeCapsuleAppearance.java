@@ -34,20 +34,26 @@ final class NativeCapsuleAppearance {
         capsule=lookup.load(VIEWS+"CapsuleView");container=lookup.load(VIEWS+"CapsuleContainer");
         if(!ViewGroup.class.isAssignableFrom(capsule)||!ViewGroup.class.isAssignableFrom(container))
             throw new NoSuchMethodException("Capsule view types");
+        boolean alternate = ColorOs16Plugin.capsule(container);
         Field foreground;boolean old;
-        try{foreground=Reflect.field(capsule,"f",GradientDrawable.class);old=false;}
+        if (alternate) {
+            foreground = Reflect.field(capsule, "p", GradientDrawable.class);
+            old = true;
+        } else try{foreground=Reflect.field(capsule,"f",GradientDrawable.class);old=false;}
         catch(NoSuchFieldException missing){foreground=Reflect.field(capsule,"q",GradientDrawable.class);old=true;}
         legacy=old;drawable=foreground;
-        intensity=Reflect.field(capsule,old?"o":"d",float.class);color=Reflect.field(capsule,old?"p":"e",int.class);
+        intensity=Reflect.field(capsule,alternate?"n":old?"o":"d",float.class);
+        color=Reflect.field(capsule,alternate?"o":old?"p":"e",int.class);
         dark=Reflect.method(capsule,"b",void.class,float.class);inflated=Reflect.method(capsule,"onFinishInflate",void.class);
         moons=Reflect.method(container,"setMoonViewShown",void.class,boolean.class);
         left=Reflect.method(container,"getLeftMoon",ImageView.class);right=Reflect.method(container,"getRightMoon",ImageView.class);
-        contentState=Reflect.field(container,old?"x":"m",Enum.class);
+        contentState=Reflect.field(container,alternate?"v":old?"x":"m",Enum.class);
         stateChanged=Reflect.method(container,old?"i":"h",void.class,
-                lookup.load(old?"y4.f":"com.oplus.systemui.plugins.seedling.capsule.ui.model.f"),boolean.class);
-        Class<?> callback=lookup.load(old?"w4.d":"com.oplus.systemui.plugins.seedling.capsule.data.repo.d");
-        colorChanged=Reflect.method(callback,old?"b":"m",void.class,Bundle.class);
-        callbackView=Reflect.field(callback,old?"b":"c",Object.class);
+                lookup.load(alternate?"k4.f":old?"y4.f":"com.oplus.systemui.plugins.seedling.capsule.ui.model.f"),boolean.class);
+        // This version delivers sampled colors through CapsuleView.b(float) itself.
+        Class<?> callback=alternate?null:lookup.load(old?"w4.d":"com.oplus.systemui.plugins.seedling.capsule.data.repo.d");
+        colorChanged=callback==null?null:Reflect.method(callback,old?"b":"m",void.class,Bundle.class);
+        callbackView=callback==null?null:Reflect.field(callback,old?"b":"c",Object.class);
         if(inflated.getDeclaringClass()!=capsule||dark.getDeclaringClass()!=capsule||moons.getDeclaringClass()!=container)
             throw new NoSuchMethodException("Inherited capsule hook is not supported");
     }
@@ -69,15 +75,15 @@ final class NativeCapsuleAppearance {
         }
         if(!(view.getBackground() instanceof GradientDrawable bg)
                 || !(view.getForeground() instanceof GradientDrawable fg) || Reflect.get(drawable,view)!=fg)return;
+        // The capsule resources on both firmware generations are solid fills with a solid stroke.
+        if (bg.getColor() == null || fg.getColor() == null || bg.getCornerRadii() != null
+                || fg.getCornerRadii() != null) return;
         float density=view.getResources().getDisplayMetrics().density;
         if(old!=null && bg==old.appliedBackground() && fg==old.appliedForeground()
                 && style.equals(old.style()) && density==old.density())return;
-        GradientDrawable newBg=loadChrome(view,style.continuous()?"capsule_view_smooth_bg_ic":"capsule_view_bg_ic");
-        GradientDrawable newFg=loadChrome(view,style.continuous()?"capsule_view_smooth_fg_ic":"capsule_view_fg_ic");
-        if(newBg==null || newFg==null)return;
+        CapsuleChromeDrawable newBg = new CapsuleChromeDrawable(bg, style.requested(density), style.continuous());
+        CapsuleChromeDrawable newFg = new CapsuleChromeDrawable(fg, style.requested(density), style.continuous());
         Rect bgBounds=new Rect(bg.getBounds()),fgBounds=new Rect(fg.getBounds());
-        copyChrome(bg,newBg,style.dp()*density);
-        copyChrome(fg,newFg,style.dp()*density);
         GradientDrawable nativeBg=old!=null&&bg==old.appliedBackground()?old.background():bg;
         GradientDrawable nativeFg=old!=null&&fg==old.appliedForeground()?old.foreground():fg;
         chrome.put(view,new Chrome(nativeBg,nativeFg,newBg,newFg,style,density));
@@ -87,18 +93,6 @@ final class NativeCapsuleAppearance {
         newBg.setBounds(bgBounds);
         newFg.setBounds(fgBounds);
         updateStroke(view,hideStroke);
-    }
-    @android.annotation.SuppressLint({"DiscouragedApi","UseCompatLoadingForDrawables"})
-    private static GradientDrawable loadChrome(View view,String name){
-        var resources=view.getResources();
-        int id=resources.getIdentifier(name,"drawable","com.oplus.systemui.plugins");
-        return id!=0 && resources.getDrawable(id,null).mutate() instanceof GradientDrawable gradient?gradient:null;
-    }
-    private static void copyChrome(GradientDrawable source,GradientDrawable target,float radius){
-        target.setColor(source.getColor());
-        target.setAlpha(source.getAlpha());
-        target.setLevel(source.getLevel());
-        target.setCornerRadius(radius);
     }
     private void writeForeground(View view,GradientDrawable foreground){
         try{drawable.set(view,foreground);}catch(IllegalAccessException error){throw new IllegalStateException(error);}

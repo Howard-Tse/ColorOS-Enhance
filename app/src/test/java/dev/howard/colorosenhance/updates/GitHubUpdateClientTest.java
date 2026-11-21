@@ -71,6 +71,21 @@ public class GitHubUpdateClientTest {
         assertEquals(7000,connection.getConnectTimeout());assertEquals(10000,connection.getReadTimeout());
         assertFalse(connection.getInstanceFollowRedirects());assertFalse(connection.getUseCaches());
         assertNull(connection.getRequestProperty("Authorization"));assertFalse(connection.getDoOutput());
+        assertEquals("application/vnd.github.full+json", connection.getRequestProperty("Accept"));
+    }
+    @Test public void keepsRenderedNotesAndFallsBackWithoutTruncatingHtmlTags() throws Exception {
+        JSONObject response = new JSONObject(release()).put("body", "### 版本说明")
+                .put("body_html", "<h3>版本说明</h3>");
+        ReleaseInfo rendered = ReleaseInfo.parse(response.toString());
+        assertTrue(rendered.hasNotes());
+        assertEquals("<h3>版本说明</h3>", rendered.notesHtml());
+        assertEquals("### 版本说明", rendered.notes());
+        response.put("body_html", "<p>" + "a".repeat(80_000) + "</p>");
+        ReleaseInfo limited = ReleaseInfo.parse(response.toString());
+        assertEquals("", limited.notesHtml());
+        assertEquals(rendered.notes(), limited.notes());
+        response.put("body", JSONObject.NULL).put("body_html", JSONObject.NULL);
+        assertFalse(ReleaseInfo.parse(response.toString()).hasNotes());
     }
     @Test public void distinguishesUnavailableRateLimitedAndInvalidResponses() throws Exception {
         for(int status:new int[]{404,429,503,302,403}) {

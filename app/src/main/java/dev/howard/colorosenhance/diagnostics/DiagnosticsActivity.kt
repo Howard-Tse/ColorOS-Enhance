@@ -1,7 +1,6 @@
 package dev.howard.colorosenhance.diagnostics
 
 import android.content.Context
-import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -22,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
-import dev.howard.colorosenhance.BuildConfig
 import dev.howard.colorosenhance.EnhanceApplication
 import dev.howard.colorosenhance.SettingsCatalog
 import dev.howard.colorosenhance.SettingsIcons
@@ -30,6 +28,8 @@ import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -49,6 +49,7 @@ class DiagnosticsActivity : AppCompatActivity() {
 
 private data class PointStatus(val point: DiagnosticPoint, val configured: Boolean?, val summary: String)
 private data class ModuleStatus(val environment: String, val service: String, val rows: List<PointStatus>)
+private data class ExportOptions(val duration: Duration, val interfaces: Boolean)
 private val reportRanges = listOf("15 分钟" to Duration.ofMinutes(15), "1 小时" to Duration.ofHours(1), "24 小时" to Duration.ofHours(24))
 private val reportTime = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss XXX").withZone(ZoneId.systemDefault())
 
@@ -78,8 +79,7 @@ private fun status(app: EnhanceApplication): ModuleStatus {
         PointStatus(point, configured, "配置$setting · $runtime$last")
     }
     val connection = if (app.frameworkService() == null) "LSPosed 服务未连接" else "LSPosed 服务已连接"
-    return ModuleStatus("模块 ${BuildConfig.VERSION_NAME} · Android ${Build.VERSION.RELEASE}（API ${Build.VERSION.SDK_INT}）\n固件 ${Build.VERSION.INCREMENTAL}",
-        connection, rows)
+    return ModuleStatus(DiagnosticEnvironment.summary(), connection, rows)
 }
 
 @Composable
@@ -102,6 +102,7 @@ private fun DiagnosticsScreen(activity: DiagnosticsActivity) {
     var loadFailed by remember { mutableStateOf(false) }
     var range by rememberSaveable { mutableIntStateOf(1) }
     var showDisabled by rememberSaveable { mutableStateOf(false) }
+    var includeInterfaces by rememberSaveable { mutableStateOf(true) }
     var saving by remember { mutableStateOf(false) }
     DisposableEffect(app) {
         val observer = Runnable { revision++ }
@@ -113,30 +114,51 @@ private fun DiagnosticsScreen(activity: DiagnosticsActivity) {
         snapshot = result.getOrNull()
         loadFailed = result.isFailure
     }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val duration = reportRanges[range].second
+        val options = ExportOptions(reportRanges[range].second, includeInterfaces)
         saving = true
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val current = status(app)
                     val now = System.currentTimeMillis()
-                    val events = DiagnosticStore.get(app).recent(now, duration.toMillis())
+                    val events = DiagnosticStore.get(app).recent(now, options.duration.toMillis())
+                    val sdk = SeedlingSdkDiagnostics.request(app, options.interfaces)
                     val report = buildString {
-                        appendLine("ColorOS 增强 · 模块诊断"); appendLine(current.environment); appendLine(current.service)
+                        appendLine("ColorOS 增强 · 模块诊断")
+                        appendLine("格式 2")
                         appendLine("导出时间 ${reportTime.format(Instant.ofEpochMilli(now))}")
-                        appendLine("\n关键接口")
-                        current.rows.filter { it.configured != false }.forEach { appendLine("${it.point.name} ${it.point.label} · ${it.summary.replace('\n', ' ')}") }
-                        appendLine("\n最近事件（${events.size} 条）")
+                        appendLine(current.service)
+                        appendLine()
+                        append(DiagnosticEnvironment.describe(app, sdk))
+                        appendLine("\n关键 Hook 状态")
+                        for (host in DiagnosticPoint.Scope.entries) {
+                            appendLine("${host.label} (${host.packageName}) · ${if (DiagnosticProvider.live(host)) "当前进程已报告" else "当前进程尚未确认"}")
+                            current.rows.filter { it.point.scope == host }.forEach {
+                                appendLine("  ${it.point.name} ${it.point.label} · ${it.summary.replace('\n', ' ')}")
+                            }
+                        }
+                        appendLine("\n最近事件（最近 ${options.duration.toMinutes()} 分钟，${events.size} 条）")
                         for (entry in events) appendLine("${reportTime.format(Instant.ofEpochMilli(entry.time()))} ${entry.point().scope.label} ${entry.point().name} ${entry.state().name}")
+                        if (options.interfaces) {
+                            appendLine("\ninterfaces/ 包含已安装系统组件中选定的 DEX 类、成员和关键指令的符号引用。")
+                            appendLine("候选类缺失可能是固件差异，接口清单与 Hook 的实际运行状态应一起查看。")
+                        }
                     }
-                    checkNotNull(app.contentResolver.openOutputStream(uri, "wt")).bufferedWriter(Charsets.UTF_8).use { it.write(report) }
-                    events.size
+                    val output = checkNotNull(app.contentResolver.openOutputStream(uri, "wt"))
+                    ZipOutputStream(output).use { zip ->
+                        zip.putNextEntry(ZipEntry("diagnostics.txt"))
+                        zip.write(report.toByteArray(Charsets.UTF_8))
+                        zip.closeEntry()
+                        val components = if (options.interfaces) DiagnosticInterfaces.write(app, zip, sdk) else 0
+                        if (options.interfaces) "${events.size} 条事件，$components 个组件的接口"
+                        else "${events.size} 条事件"
+                    }
                 }
             }
             saving = false
-            Toast.makeText(activity, result.fold({ "诊断日志已保存（$it 条事件）" }, { "保存诊断日志失败" }), Toast.LENGTH_SHORT).show()
+            Toast.makeText(activity, result.fold({ "诊断包已保存（$it）" }, { "保存诊断包失败" }), Toast.LENGTH_SHORT).show()
         }
     }
     MiuixTheme(controller = theme) {
@@ -157,9 +179,11 @@ private fun DiagnosticsScreen(activity: DiagnosticsActivity) {
                 } }
                 item("export") { Card(Modifier.fillMaxWidth()) {
                     BasicComponent(title = "日志范围 · 最近 ${reportRanges[range].first}", onClick = { range = (range + 1) % reportRanges.size })
-                    BasicComponent(title = if (saving) "正在保存…" else "保存诊断日志", enabled = !saving,
-                        summary = "最多保留 24 小时内的 512 条模块事件。日志包含固件与 Hook 状态，不含通知正文、账号或 PIN。",
-                        onClick = { picker.launch("ColorOS-Enhance-diagnostics.txt") })
+                    SwitchPreference(includeInterfaces, { includeInterfaces = it }, "同时导出系统接口",
+                        summary = "附加系统组件中的关键类、方法签名、字段和代码引用。")
+                    BasicComponent(title = if (saving) "正在保存…" else "保存诊断包", enabled = !saving,
+                        summary = "ZIP 内包含固件、组件版本和最多 512 条模块事件。",
+                        onClick = { picker.launch("ColorOS-Enhance-diagnostics.zip") })
                 } }
                 for (host in DiagnosticPoint.Scope.entries) {
                     val rows = snapshot?.rows.orEmpty().filter { it.point.scope == host && (showDisabled || it.configured != false) }

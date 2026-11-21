@@ -263,7 +263,7 @@ public final class FeatureDemoView extends View {
         float left=124-104*p,right=236+104*p,top=13+(attached?0:34*p),bottom=41+111*p;
         boolean custom=enabled()&&flag("card_corners_enabled"),continuous=custom&&flag("card_continuous_corners");
         float collapsed=enabled()&&flag("capsule_corners_enabled")?Math.min(14,bounded("capsule_corner_dp",16,0,24)):14;
-        float expanded=custom?bounded("card_corner_dp",28,0,64):24;
+        float expanded=custom?bounded("card_corner_dp",28,0,CloudCorners.CARD_RADIUS_MAX_DP):24;
         float radius=collapsed+(expanded-collapsed)*p;
         rect.set(left,top,right,bottom);
         CloudCorners.path(outline,rect,radius,continuous);

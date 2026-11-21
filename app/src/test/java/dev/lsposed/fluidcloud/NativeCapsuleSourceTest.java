@@ -119,7 +119,7 @@ public class NativeCapsuleSourceTest {
         source.refresh(window,region);Rect original=new Rect(background.getBounds());var originalParent=payload.getParent();
         var profile=new CapsulePresentationGeometry.Profile(new android.graphics.RectF(85,40,95,50),8,9);
         var pose=new CapsuleMotion.Pose(.5,1,0,.3,1,.5,0);var geometry=CapsulePresentationGeometry.resolve(new android.graphics.RectF(region.getBounds()),profile,pose);
-        Bitmap bitmap=Bitmap.createBitmap(500,1000,Bitmap.Config.ARGB_8888);assertTrue(source.drawMorph(new Canvas(bitmap),window,geometry,-1f));
+        Bitmap bitmap=Bitmap.createBitmap(500,1000,Bitmap.Config.ARGB_8888);assertTrue(source.drawMorph(new Canvas(bitmap),window,geometry,null));
         assertEquals(Color.RED,bitmap.getPixel(90,45));assertEquals(Color.BLUE,bitmap.getPixel(78,45));assertEquals(Color.TRANSPARENT,bitmap.getPixel(120,45));
         assertEquals(original,background.getBounds());assertSame(originalParent,payload.getParent());assertEquals(1,payload.getScaleX(),0);
         assertEquals(new Rect(0,0,60,30),new Rect(payload.getLeft(),payload.getTop(),payload.getRight(),payload.getBottom()));
@@ -138,7 +138,7 @@ public class NativeCapsuleSourceTest {
         var profile=new CapsulePresentationGeometry.Profile(new android.graphics.RectF(85,40,95,50),8,9);
         var geometry=CapsulePresentationGeometry.resolve(new android.graphics.RectF(region.getBounds()),profile,new CapsuleMotion.Pose(.5,1,0,.5,.5,.5,0));
         Bitmap bitmap=Bitmap.createBitmap(500,1000,Bitmap.Config.ARGB_8888);
-        assertFalse(source.drawMorph(new Canvas(bitmap),window,geometry,-1f));assertEquals(Color.TRANSPARENT,bitmap.getPixel(90,45));source.clearMorph();
+        assertFalse(source.drawMorph(new Canvas(bitmap),window,geometry,null));assertEquals(Color.TRANSPARENT,bitmap.getPixel(90,45));source.clearMorph();
     }
 
     @Test public void blankSlotKeepsOnlyPreviousCapsuleSwipeBoundsWithoutStalePixels(){

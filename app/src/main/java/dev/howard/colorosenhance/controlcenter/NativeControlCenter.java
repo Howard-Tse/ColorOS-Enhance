@@ -86,19 +86,34 @@ final class NativeControlCenter {
     static final class Seamless {
         final Field controller;
         final Method fraction,header,mirror,animator,rawFraction;
+        private final Field animatorFacade;
         Seamless(Class<?> component)throws ReflectiveOperationException {
             controller=field(component,"fakeStatusContainerController");Class<?> type=controller.getType();
             fraction=method(type,"updateRightArea",float.class);
             header=method(type,"getStatusBarContainer");mirror=method(type,"getFakeLayout");
-            animator=method(component,"getQsPanelAnimatorManager");rawFraction=method(animator.getReturnType(),"getRawFraction");
+            Method manager;
+            Field facade;
+            try {
+                manager=method(component,"getQsPanelAnimatorManager");
+                facade=null;
+            } catch (NoSuchMethodException older) {
+                manager=null;
+                facade=field(component,"qsPanelAnimatorFacade");
+            }
+            animator=manager;animatorFacade=facade;
+            rawFraction=method(animator!=null?animator.getReturnType():animatorFacade.getType(),"getRawFraction");
             if(!View.class.isAssignableFrom(header.getReturnType()) || !View.class.isAssignableFrom(mirror.getReturnType()))
                 throw new NoSuchMethodException("QS mirror/header type");
+            if(rawFraction.getReturnType()!=float.class)throw new NoSuchMethodException("QS raw fraction type");
         }
         Object owner(Object component){return get(controller,component);}
+        float progress(Object component){
+            Object source=animator!=null?call(animator,component):get(animatorFacade,component);
+            return (float)call(rawFraction,source);
+        }
         ControlCenterIconMotion create(Object component,View root){
             Object owner=owner(component);
-            return new ControlCenterIconMotion(root,(View)call(header,owner),(View)call(mirror,owner),
-                    ((Number)call(rawFraction,call(animator,component))).floatValue());
+            return new ControlCenterIconMotion(root,(View)call(header,owner),(View)call(mirror,owner),progress(component));
         }
     }
     private static Field optionalField(Class<?> type,String name){try{return field(type,name);}catch(NoSuchFieldException unavailable){return null;}}

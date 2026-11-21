@@ -337,7 +337,7 @@ final class NativeCapsuleSource {
         }
         return Optional.ofNullable(found);
     }
-    boolean drawMorph(Canvas canvas,View window,CapsulePresentationGeometry.Geometry geometry,float radius){
+    boolean drawMorph(Canvas canvas,View window,CapsulePresentationGeometry.Geometry geometry,CloudCorners.Axes corners){
         if(capsules.isEmpty())return false;
         for(View capsule:capsules)if(!(capsule instanceof ViewGroup group) || group.getChildCount()==0)return false;
         skins.keySet().retainAll(capsules);
@@ -348,7 +348,7 @@ final class NativeCapsuleSource {
         captureWindowOffset(window);
         for(View capsule:capsules){
             Skin skin=skins.get(capsule);
-            skin.drawShape(canvas,capsule,geometry.bounds(),false,radius);
+            skin.drawShape(canvas,capsule,geometry.bounds(),false,corners);
             ViewGroup group=(ViewGroup)capsule;
             int save=canvas.save();
             try{
@@ -371,7 +371,7 @@ final class NativeCapsuleSource {
                     }finally{canvas.restoreToCount(childSave);}
                 }
             }finally{canvas.restoreToCount(save);}
-            skin.drawShape(canvas,capsule,geometry.bounds(),true,radius);
+            skin.drawShape(canvas,capsule,geometry.bounds(),true,corners);
         }
         return true;
     }
@@ -410,14 +410,20 @@ final class NativeCapsuleSource {
             if(originalBackground!=view.getBackground()){originalBackground=view.getBackground();background=copy(originalBackground,view.getResources());}
             if(originalForeground!=view.getForeground()){originalForeground=view.getForeground();foreground=copy(originalForeground,view.getResources());}
         }
-        private static Drawable copy(Drawable original,Resources resources){return original==null || original.getConstantState()==null?null:original.getConstantState().newDrawable(resources).mutate();}
+        private static Drawable copy(Drawable original,Resources resources){
+            if (original instanceof CapsuleChromeDrawable chrome) return chrome.copy();
+            return original==null || original.getConstantState()==null?null:original.getConstantState().newDrawable(resources).mutate();
+        }
         RenderEffect blur(float radius){int key=Math.max(1,Math.round(radius*2));return effects.computeIfAbsent(key,k->RenderEffect.createBlurEffect(k/2f,k/2f,Shader.TileMode.CLAMP));}
-        void drawShape(Canvas canvas,View view,RectF bounds,boolean front,float radius){
+        void drawShape(Canvas canvas,View view,RectF bounds,boolean front,CloudCorners.Axes corners){
             Drawable drawable=front?foreground:background,original=front?originalForeground:originalBackground;
             if(drawable==null)return;
             drawable.setState(view.getDrawableState());drawable.setLevel(original.getLevel());drawable.setAlpha(Math.round(original.getAlpha()*view.getAlpha()));
-            if(radius>=0 && drawable instanceof android.graphics.drawable.GradientDrawable shape && shape.getCornerRadius()!=radius)
-                shape.setCornerRadius(radius);
+            if (drawable instanceof CapsuleChromeDrawable chrome && original instanceof CapsuleChromeDrawable live) {
+                chrome.syncStroke(live);
+                chrome.animatedCorners(corners);
+            } else if(corners!=null && drawable instanceof android.graphics.drawable.GradientDrawable shape
+                    && shape.getCornerRadius()!=corners.y()) shape.setCornerRadius(corners.y());
             drawable.setBounds(Math.round(bounds.left),Math.round(bounds.top),Math.round(bounds.right),Math.round(bounds.bottom));drawable.draw(canvas);
         }
     }

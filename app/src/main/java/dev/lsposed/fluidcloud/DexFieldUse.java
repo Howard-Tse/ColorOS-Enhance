@@ -15,10 +15,11 @@ import java.util.zip.ZipFile;
 /** Reads field references in a selected plugin method. Discovery runs once, never during animation. */
 final class DexFieldUse {
     private record Member(String owner, String name, String type) { }
-    private final ByteBuffer data;
-    private final int strings, types, fields, methods, protos;
+    final ByteBuffer data;
+    final int fields, methods, protos;
+    private final int strings, types;
 
-    private DexFieldUse(byte[] bytes) throws IOException {
+    DexFieldUse(byte[] bytes) throws IOException {
         data = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
         if (bytes.length < 112 || bytes[0] != 'd' || bytes[1] != 'e' || bytes[2] != 'x'
                 || data.getInt(32) != bytes.length || data.getInt(40) != 0x12345678)
@@ -144,8 +145,8 @@ final class DexFieldUse {
         return 1;
     }
 
-    private int u16(int offset) { return Short.toUnsignedInt(data.getShort(offset)); }
-    private int uleb(int[] cursor) {
+    int u16(int offset) { return Short.toUnsignedInt(data.getShort(offset)); }
+    int uleb(int[] cursor) {
         int result = 0;
         for (int shift = 0; shift <= 28; shift += 7) {
             int value = Byte.toUnsignedInt(data.get(cursor[0]++));
@@ -154,8 +155,8 @@ final class DexFieldUse {
         }
         throw new IllegalArgumentException("Invalid DEX integer");
     }
-    private String type(int index) { return string(data.getInt(types + index * 4)); }
-    private String string(int index) {
+    String type(int index) { return string(data.getInt(types + index * 4)); }
+    String string(int index) {
         int[] cursor = {data.getInt(strings + index * 4)};
         uleb(cursor);
         int begin = cursor[0], end = begin;

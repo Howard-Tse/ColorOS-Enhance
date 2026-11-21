@@ -72,6 +72,9 @@ final class NativeSettingsPage {
     void create() throws ReflectiveOperationException {
         screen=host.call(host.call(fragment,"getPreferenceManager"),"createPreferenceScreen",context);
         host.call(screen,"setPersistent",false);
+        boolean scenePage = "cloud_scenes".equals(pageRoute);
+        if (scenePage) buildSubpages(SettingsLayout.items(context, pageRoute).stream()
+                .filter(SettingsLayout::isSceneSetupItem).toList());
         Object information=category("information",null);
         statusRow=jump(information,"status","连接状态",()->retry());
         if("home".equals(route)) {
@@ -83,7 +86,7 @@ final class NativeSettingsPage {
             }
             Object integration=category("integration","模块管理");
             Object diagnostics=jump(integration,"module_diagnostics","模块状态",()->dev.howard.colorosenhance.diagnostics.DiagnosticLinks.open(context));
-            host.call(diagnostics,"setSummary","检查关键 Hook、作用域与回退记录，保存诊断日志");
+            host.call(diagnostics,"setSummary","查看固件版本、Hook 状态与回退记录，保存诊断包");
             toggle(integration,"launcher_visible","显示桌面图标","隐藏后可从此页面或 LSPosed 模块设置恢复，桌面刷新可能稍有延迟。",value->{
                 Bundle request=command("launcher_visibility"); request.putBoolean("visible",value); managementAction(request);
             });
@@ -135,18 +138,13 @@ final class NativeSettingsPage {
                         ()->dialogs.demo(presentation.demo(),pageRoute,presentation.title(),presentation.summary(),valueMap(route)));
                 host.call(preview,"setSummary","系统效果模拟 · 点按预览当前选项，不会修改设置");
             }
-            Object pages=null;
-            for(var child:SettingsLayout.children(pageRoute)){
-                if(child.route().equals("sim_slots") || child.route().equals("cloud_notification_apps"))continue;
-                if(pages==null)pages=category("pages","功能分类");
-                Object target=jump(pages,"open_"+child.route(),child.title(),()->open(child.route()));
-                host.call(target,"setSummary",child.summary());
-            }
+            if (!scenePage) buildSubpages(List.of());
             if("installer".equals(route))jump(category("installer_target","安装器"),"target_package","选择安装器",this::chooseInstaller);
             if("icons".equals(pageRoute))jump(category("bluetooth_rules","蓝牙"),"bluetooth_mode","蓝牙显示规则",this::chooseBluetoothRule);
             if("icons".equals(pageRoute))jump(category("icon_order","图标位置"),"edit_order","编辑左右区域与顺序",this::editIconOrder);
             String section=null; Object current=master;
             for(SettingsCatalog.Item item:SettingsLayout.items(context,pageRoute)) {
+                if (SettingsLayout.isSceneSetupItem(item)) continue;
                 if(!item.section().equals(section)) {
                     section=item.section(); current=category("section_"+section,section);
                     controls.put("section_"+section,current);
@@ -187,6 +185,18 @@ final class NativeSettingsPage {
         }
         host.call(fragment,"setPreferenceScreen",screen);
         render();
+    }
+    private void buildSubpages(List<SettingsCatalog.Item> sceneSetup) throws ReflectiveOperationException {
+        Object pages = sceneSetup.isEmpty() ? null : category("pages", null);
+        for (SettingsCatalog.Item item : sceneSetup) {
+            toggle(pages, item.key(), item.title(), item.description(), value -> put(route, item.key(), value));
+        }
+        for (var child : SettingsLayout.children(pageRoute)) {
+            if (child.route().equals("sim_slots") || child.route().equals("cloud_notification_apps")) continue;
+            if (pages == null) pages = category("pages", "功能分类");
+            Object target = jump(pages, "open_" + child.route(), child.title(), () -> open(child.route()));
+            host.call(target, "setSummary", child.summary());
+        }
     }
     private Object category(String key,String title) throws ReflectiveOperationException {
         Object category=host.create(CATEGORY,context);

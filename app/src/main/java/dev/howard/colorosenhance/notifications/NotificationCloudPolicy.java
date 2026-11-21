@@ -18,6 +18,7 @@ public final class NotificationCloudPolicy {
                 || Notification.CATEGORY_ALARM.equals(n.category) || Notification.CATEGORY_SYSTEM.equals(n.category)
                 || Notification.CATEGORY_TRANSPORT.equals(n.category)) return NotificationCloudRules.Mode.NATIVE;
         if (n.extras != null) {
+            if (n.extras.getString("oplusLiveAlertOptions") != null) return NotificationCloudRules.Mode.NATIVE;
             for (String key : n.extras.keySet()) if (key.startsWith("oplus.livealert") || key.startsWith("oplus.aod")) return NotificationCloudRules.Mode.NATIVE;
             if (n.extras.getString(Notification.EXTRA_TEMPLATE, "").contains("MediaStyle")) return NotificationCloudRules.Mode.NATIVE;
         }

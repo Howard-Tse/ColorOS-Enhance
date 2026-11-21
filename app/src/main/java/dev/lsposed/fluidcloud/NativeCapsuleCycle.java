@@ -11,10 +11,14 @@ final class NativeCapsuleCycle {
     java.util.function.Consumer<String> trace=value->{};
     private final Field owner,items;
     NativeCapsuleCycle(NativeCapsuleAppearance.Lookup lookup,boolean legacy)throws ReflectiveOperationException{
+        boolean alternate = false;
+        if (legacy) try {
+            alternate = ColorOs16Plugin.capsule(lookup.load(NativeCapsuleAppearance.VIEWS+"CapsuleContainer"));
+        } catch (ClassNotFoundException missing) { /* Older helper contracts do not require a view lookup. */ }
         Class<?> helper;
-        try{helper=lookup.load(legacy?"a5.h":"com.oplus.systemui.plugins.seedling.capsule.ui.viewmodel.l");}
+        try{helper=lookup.load(alternate?"m4.h":legacy?"a5.h":"com.oplus.systemui.plugins.seedling.capsule.ui.viewmodel.l");}
         catch(ClassNotFoundException missing){if(legacy)throw missing;helper=null;}
-        Class<?> model=lookup.load(legacy?"a5.q":"com.oplus.systemui.plugins.seedling.capsule.ui.viewmodel.u");
+        Class<?> model=lookup.load(alternate?ColorOs16Plugin.CAPSULE_MODEL:legacy?"a5.q":"com.oplus.systemui.plugins.seedling.capsule.ui.viewmodel.u");
         if(!legacy && !hasCycle(helper)){
             Class<?> container=lookup.load(NativeCapsuleAppearance.VIEWS+"CapsuleContainer");
             Class<?> action=lookup.load("com.oplus.systemui.plugins.seedling.capsule.ui.model.a").getSuperclass();

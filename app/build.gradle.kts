@@ -22,8 +22,8 @@ android {
         applicationId = publicApplicationId
         minSdk = 36
         targetSdk = 36
-        versionCode = 72
-        versionName = "1.32.0"
+        versionCode = 73
+        versionName = "1.32.1"
         buildConfigField("String", "PUBLIC_APPLICATION_ID", "\"$publicApplicationId\"")
         buildConfigField("String", "LEGACY_APPLICATION_ID", "\"$legacyApplicationId\"")
         manifestPlaceholders["publicApplicationId"] = publicApplicationId
