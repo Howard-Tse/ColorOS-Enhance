@@ -12,20 +12,29 @@ import org.json.JSONException;
 /** One launch/manual check; no token, settings upload, periodic work, or download/installation backend. */
 public final class GitHubUpdateClient {
     private static final int MAX_RESPONSE_BYTES = 512 * 1024;
-    interface Connections { HttpsURLConnection open() throws IOException; }
+    interface Connections { HttpsURLConnection open(String url) throws IOException; }
+    private interface ReleaseParser { ReleaseInfo parse(String body) throws JSONException; }
     public record Result(ReleaseInfo release, String error) {
         public boolean successful() { return release != null; }
     }
     private final Connections connections;
     public GitHubUpdateClient() {
-        this(() -> (HttpsURLConnection) URI.create(ReleaseInfo.API_URL).toURL().openConnection());
+        this(url -> (HttpsURLConnection) URI.create(url).toURL().openConnection());
     }
     GitHubUpdateClient(Connections connections) { this.connections = connections; }
 
-    public Result check() {
+    public Result check(boolean includePrereleases) {
+        if (includePrereleases) {
+            Result listed = fetch(ReleaseInfo.RELEASES_API_URL + "?per_page=10", ReleaseInfo::latestListed);
+            if (listed.release() != null || listed.error() != null) return listed;
+        }
+        return fetch(ReleaseInfo.API_URL, ReleaseInfo::parse);
+    }
+
+    private Result fetch(String url, ReleaseParser parser) {
         HttpsURLConnection connection = null;
         try {
-            connection = connections.open();
+            connection = connections.open(url);
             connection.setConnectTimeout(7000);
             connection.setReadTimeout(10000);
             connection.setInstanceFollowRedirects(false);
@@ -48,7 +57,7 @@ public final class GitHubUpdateClient {
                     if (count > MAX_RESPONSE_BYTES - bytes.size()) return invalid();
                     bytes.write(buffer, 0, count);
                 }
-                return new Result(ReleaseInfo.parse(bytes.toString(StandardCharsets.UTF_8)), null);
+                return new Result(parser.parse(bytes.toString(StandardCharsets.UTF_8)), null);
             }
         } catch (SocketTimeoutException timeout) {
             return failed("连接 GitHub 超时，请检查网络后重试。");

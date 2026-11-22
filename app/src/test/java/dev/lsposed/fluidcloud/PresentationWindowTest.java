@@ -102,6 +102,77 @@ public class PresentationWindowTest {
         Pending frames=new Pending();window.frameSync=frames;stage(1);window.request(CloudPresentationCoordinator.Owner.MODULE,ticket,()->fail("late ready"));
         allowed=false;window.release();frames.commit();assertEquals(1,nativeAlpha(),0);assertEquals(Color.TRANSPARENT,draw().getPixel(65,35));
     }
+    @Test public void lockExitCollapsesTheLastShapeWithoutDrawingProviderPixelsOrAcceptingInput() throws Exception {
+        show();
+        surface.measure(View.MeasureSpec.makeMeasureSpec(500, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY));
+        surface.layout(0, 0, 500, 1000);
+        assertTrue(touch(MotionEvent.ACTION_DOWN, 80, 45));
+        window.beginLockExit(() -> true, "test-logical-screen-off");
+        assertTrue(window.hasLockHandoff());
+        allowed = false;
+        window.release();
+        assertFalse(surface.isLayoutRequested());
+        assertEquals(MotionEvent.ACTION_CANCEL, host.action);
+        assertFalse(touch(MotionEvent.ACTION_DOWN, 80, 45));
+        assertEquals(Color.BLACK, draw().getPixel(65, 45));
+        assertEquals(0, nativeAlpha(), 0);
+
+        Object exit = ReflectionHelpers.getField(window, "lockExit");
+        android.animation.ValueAnimator animator = ReflectionHelpers.getField(exit, "animator");
+        animator.setCurrentPlayTime(animator.getDuration() / 2);
+        Bitmap midway = draw();
+        assertEquals(Color.TRANSPARENT, midway.getPixel(65, 45));
+        assertEquals(255, Color.alpha(midway.getPixel(90, 45)));
+        animator.end();
+        assertEquals(View.INVISIBLE, surface.getVisibility());
+        // Even after the animation ends, do not reveal a still-visible stock capsule.
+        window.restoreHiddenLockSource();
+        assertTrue(window.hasLockHandoff());
+        assertEquals(0, nativeAlpha(), 0);
+        host.setVisibility(View.INVISIBLE);
+        window.restoreHiddenLockSource();
+        assertFalse(window.hasLockHandoff());
+        assertEquals(1, nativeAlpha(), 0);
+    }
+    @Test public void sleepExitStopsDrawingAsSoonAsTheDisplayIsNoLongerOn() throws Exception {
+        show();
+        var displayOn = new java.util.concurrent.atomic.AtomicBoolean(true);
+        window.beginLockExit(displayOn::get, "test");
+        allowed = false;
+        window.release();
+        displayOn.set(false);
+        assertEquals(Color.TRANSPARENT, draw().getPixel(90, 45));
+        window.endLockExit("test-display-off");
+        assertEquals(1, nativeAlpha(), 0);
+        assertFalse(window.hasLockHandoff());
+    }
+    @Test public void sceneCollapseDrawsTheLastOutlineAfterTheNativeCapsuleHides() {
+        show();
+        body.setVisibility(View.INVISIBLE);
+        window.prepare();
+        var motion = new CapsuleMotion();
+        motion.target(false);
+        window.render(new CloudPresentationCoordinator.Frame(ticket, null,
+                CloudPresentationCoordinator.Owner.MODULE, 1, motion.current(), true));
+        assertEquals(Color.BLACK, draw().getPixel(65, 45));
+        motion.advance(170);
+        window.render(new CloudPresentationCoordinator.Frame(ticket, null,
+                CloudPresentationCoordinator.Owner.MODULE, motion.current().visibility(), motion.current(), true));
+        assertEquals(Color.BLACK, draw().getPixel(90, 45));
+        assertFalse(touch(MotionEvent.ACTION_DOWN, 90, 45));
+
+        motion.advance(25);
+        window.render(new CloudPresentationCoordinator.Frame(ticket, null,
+                CloudPresentationCoordinator.Owner.MODULE, motion.current().visibility(), motion.current(), true));
+        int tailAlpha = Color.alpha(draw().getPixel(90, 45));
+        assertTrue(tailAlpha > 0 && tailAlpha < 255);
+        motion.advance(5);
+        window.render(new CloudPresentationCoordinator.Frame(ticket, null,
+                CloudPresentationCoordinator.Owner.HIDDEN, 0, motion.current(), false));
+        window.request(CloudPresentationCoordinator.Owner.HIDDEN, ticket, () -> {});
+        assertEquals(Color.TRANSPARENT, draw().getPixel(90, 45));
+    }
     @Test public void nativeShadeDragHasOneInputTargetAcrossVisualHandoff(){
         show();host.duringTouch=window.source::markNativeHandoff;assertTrue(touch(MotionEvent.ACTION_DOWN,80,45));host.duringTouch=null;
         window.request(CloudPresentationCoordinator.Owner.NATIVE,ticket,()->{});assertEquals(View.VISIBLE,surface.getVisibility());

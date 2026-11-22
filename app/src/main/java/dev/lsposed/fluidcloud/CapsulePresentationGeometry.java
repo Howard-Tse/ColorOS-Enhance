@@ -13,6 +13,19 @@ final class CapsulePresentationGeometry {
         Matrix identity = new Matrix();
         return new Geometry(new RectF(content), identity, identity, identity, 1,1,0,1,0);
     }
+    static Geometry offsetVertically(Geometry geometry, float y) {
+        if (geometry == null || y == 0f) return geometry;
+        RectF bounds = new RectF(geometry.bounds());
+        bounds.offset(0f, y);
+        Matrix forward = new Matrix(geometry.forward());
+        forward.postTranslate(0f, y);
+        Matrix inverse = new Matrix();
+        if (!forward.invert(inverse)) return null;
+        Matrix pixels = new Matrix(geometry.contentForward());
+        pixels.postTranslate(0f, y);
+        return new Geometry(bounds, forward, inverse, pixels, geometry.fraction(), geometry.contentAlpha(),
+                geometry.blurRadius(), geometry.moonAlpha(), geometry.moonShift());
+    }
     static Geometry resolve(RectF content, RectF camera, double fraction) {
         if(!valid(content) || !Double.isFinite(fraction))return null;
         if(!valid(camera)){if(fraction<.999)return null;camera=content;}

@@ -2,6 +2,7 @@ package dev.lsposed.fluidcloud;
 
 import android.util.Log;
 import android.content.SharedPreferences;
+import android.view.View;
 import dev.howard.colorosenhance.diagnostics.DiagnosticPoint;
 import dev.howard.colorosenhance.diagnostics.DiagnosticReporter;
 import java.lang.reflect.Method;
@@ -20,6 +21,7 @@ public final class HookEntry extends XposedModule {
     private MediaShadeCard mediaShade;
     private volatile boolean mediaShadeEnabled;
     private boolean sceneInstallAttempted;
+    private boolean adapterInstallFailed;
     private CameraCardExpansion cameraCards;
     private CloudExtras extras;
     private volatile boolean keepCapsuleInForeground;
@@ -67,16 +69,13 @@ public final class HookEntry extends XposedModule {
         initialized = true;
         try {
             observePreferences();
-            if (config.unbindStatusBar()) {
-                sceneInstallAttempted = true;
-                adapter = new ColorOsAdapter(this, param.getClassLoader());
-                adapter.install();
-                report(DiagnosticPoint.SCENES, DiagnosticPoint.State.INSTALLED);
+            if (requiresAdapter(config)) {
+                installAdapter(param.getClassLoader());
             } else {
                 report(DiagnosticPoint.SCENES, DiagnosticPoint.State.NATIVE);
                 info("Status-bar scene hooks disabled by unbind switch");
             }
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
+        } catch (RuntimeException | LinkageError error) {
             adapter = null;
             report(DiagnosticPoint.SCENES, DiagnosticPoint.State.UNSUPPORTED);
             error("Unsupported SystemUI adapter; native behavior retained", error);
@@ -208,6 +207,43 @@ public final class HookEntry extends XposedModule {
         reload();
     }
 
+    private void installAdapter(ClassLoader loader) {
+        sceneInstallAttempted = true;
+        try {
+            adapter = new ColorOsAdapter(this, loader);
+            adapter.install();
+            report(DiagnosticPoint.SCENES, config.unbindStatusBar()
+                    ? DiagnosticPoint.State.INSTALLED : DiagnosticPoint.State.NATIVE);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
+            adapter = null;
+            adapterInstallFailed = true;
+            if (config.unbindStatusBar()) report(DiagnosticPoint.SCENES, DiagnosticPoint.State.UNSUPPORTED);
+            if (config.lockExitEnabled()) report(DiagnosticPoint.LOCKSCREEN, DiagnosticPoint.State.UNSUPPORTED);
+            error("Unsupported SystemUI adapter; native behavior retained", error);
+        }
+    }
+
+    int capsuleOverflowY(View root) {
+        return extras == null || config.capsulePosition(false).verticalDp() <= 0 ? 0 : extras.overflowY(root);
+    }
+
+    private static boolean requiresAdapter(CloudConfig config) {
+        return config.unbindStatusBar() || config.lockExitEnabled() || config.capsulePosition(false).verticalDp() > 0;
+    }
+
+    boolean needsLockExitAdapter() {
+        return adapter == null && !adapterInstallFailed && config.lockExitEnabled();
+    }
+
+    void capsuleHostChanged(Object controller, int overflowY) {
+        boolean extendedPlacement = overflowY > 0 && config.capsulePosition(false).verticalDp() > 0;
+        if (adapter == null && !adapterInstallFailed && (config.lockExitEnabled() || extendedPlacement)) {
+            installAdapter(controller.getClass().getClassLoader());
+            if (adapter != null) adapter.capture(controller);
+        }
+        if (adapter != null) adapter.configurationChanged();
+    }
+
     private void reload() {
         Map<String, ?> values = Map.of();
         try {
@@ -226,9 +262,16 @@ public final class HookEntry extends XposedModule {
         if (notificationCloud != null) notificationCloud.configurationChanged(values);
         if (notificationAlerts != null) notificationAlerts.update(values);
         if (adapter != null) {
-            if (!config.unbindStatusBar()) { adapter.uninstall(); adapter = null; sceneInstallAttempted = false; report(DiagnosticPoint.SCENES, DiagnosticPoint.State.NATIVE); }
-            else adapter.configurationChanged();
+            if (!requiresAdapter(config)) {
+                adapter.uninstall(); adapter = null; sceneInstallAttempted = false;
+            } else adapter.configurationChanged();
+            report(DiagnosticPoint.SCENES, config.unbindStatusBar()
+                    ? DiagnosticPoint.State.INSTALLED : DiagnosticPoint.State.NATIVE);
         } else if (allowed && config.unbindStatusBar() && !sceneInstallAttempted) report(DiagnosticPoint.SCENES, DiagnosticPoint.State.RESTART);
+        if (allowed && adapter == null && config.lockExitEnabled()) {
+            report(DiagnosticPoint.LOCKSCREEN, adapterInstallFailed
+                    ? DiagnosticPoint.State.UNSUPPORTED : DiagnosticPoint.State.WAITING);
+        }
         if (mediaShade != null) mediaShade.configurationChanged(mediaShadeEnabled);
         if (pausedMusic != null) pausedMusic.configurationChanged(config.retainPausedMusic());
         if (cameraCards != null) cameraCards.configurationChanged();

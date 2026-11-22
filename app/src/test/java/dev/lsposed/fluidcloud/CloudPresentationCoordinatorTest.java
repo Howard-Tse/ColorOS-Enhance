@@ -30,13 +30,35 @@ public class CloudPresentationCoordinatorTest {
         public void render(CloudPresentationCoordinator.Frame frame){frames.add(frame);order.add("render");}
         public void cancelTouch(){cancels++;}public void release(){releases++;}public void failure(Throwable error){failures++;}
     }
-    @Test public void defaultAndAllOemChoicesNeverAcquireOutput(){
-        for(CloudConfig config:List.of(CloudConfig.from(Map.of()),CloudConfig.from(Map.of("enabled",true,"unbind_status_bar",true,
-                "capsule_on_top",false,"capsule_keep_during_launch",false)))){
+    @Test public void lockExitIsOptInAndRequiresCloudEnhancement(){
+        for(CloudConfig config:List.of(CloudConfig.from(Map.of("capsule_lock_exit",true)),
+                CloudConfig.from(Map.of("enabled",true)),
+                CloudConfig.from(Map.of("enabled",true,"unbind_status_bar",true,"capsule_keep_during_launch",false)))){
+            assertFalse(config.lockExitEnabled());
             Port port=new Port();Clock clock=new Clock();var core=new CloudPresentationCoordinator(port,clock);
             core.update(input(config,false,null,false,false));core.update(input(config,true,null,false,false));
             assertEquals(0,port.prepares);assertTrue(port.requests.isEmpty());assertNull(clock.pending);
         }
+    }
+    @Test public void lockExitPreparesTheNormalCapsuleWithoutTakingOverOtherScenes() {
+        CloudConfig config = CloudConfig.from(Map.of("enabled", true, "capsule_lock_exit", true));
+        assertTrue(config.lockExitEnabled());
+        assertTrue(config.forOrientation(true).withCapsuleOnTop(true).lockExitEnabled());
+        assertFalse(config.scenesEnabled());
+        Port port = new Port();
+        var core = new CloudPresentationCoordinator(port, new Clock());
+        core.update(input(config, false, null, false, false));
+        assertEquals(CloudPresentationCoordinator.Owner.MODULE, core.current().owner());
+        core.update(input(config, false, CloudScene.RECENTS, false, false));
+        assertEquals(CloudPresentationCoordinator.Owner.NATIVE, core.current().owner());
+        core.update(input(config, true, null, false, false));
+        assertEquals(CloudPresentationCoordinator.Owner.NATIVE, core.current().owner());
+        core.update(input(config, false, null, true, false));
+        assertEquals(CloudPresentationCoordinator.Owner.NATIVE, core.current().owner());
+        core.update(input(config, false, null, false, false));
+        assertEquals(CloudPresentationCoordinator.Owner.MODULE, core.current().owner());
+        core.update(input(config, false, null, false, true));
+        assertEquals(CloudPresentationCoordinator.Owner.NATIVE, core.current().owner());
     }
     @Test public void eitherCapsuleOptionAcquiresOnlyVisibleUnlockedScenesAndYieldsToOemScenes(){
         for (boolean onTop : new boolean[]{true, false}) {
@@ -61,6 +83,22 @@ public class CloudPresentationCoordinatorTest {
         assertEquals(List.of("render","request","render"),port.order);
         assertEquals(CloudPresentationCoordinator.Owner.MODULE,core.current().owner());assertNull(clock.pending);
     }
+    @Test public void portraitPlacementWorksWithoutTakingOverOtherScenes() {
+        var config = CloudConfig.from(Map.of("enabled", true, "capsule_offset_y_dp", 32));
+        var core = new CloudPresentationCoordinator(new Port(), new Clock());
+        core.update(new CloudPresentationCoordinator.Input(HOST, 0, CONTENT, true, config,
+                false, false, null, false, false, true, true));
+        assertEquals(CloudPresentationCoordinator.Owner.MODULE, core.current().owner());
+        core.update(new CloudPresentationCoordinator.Input(HOST, 0, CONTENT, true, config,
+                false, false, null, true, false, true, true));
+        assertEquals(CloudPresentationCoordinator.Owner.NATIVE, core.current().owner());
+        core.update(new CloudPresentationCoordinator.Input(HOST, 0, CONTENT, true, config,
+                false, false, null, false, true, true, true));
+        assertEquals(CloudPresentationCoordinator.Owner.NATIVE, core.current().owner());
+        core.update(new CloudPresentationCoordinator.Input(HOST, 0, CONTENT, true, config,
+                true, false, null, false, false, true, true));
+        assertEquals(CloudPresentationCoordinator.Owner.NATIVE, core.current().owner());
+    }
     @Test public void systemAnimationScaleZeroSettlesWithoutReplayingAnIntermediateNativeAnimation(){
         Port port=new Port();Clock clock=new Clock();clock.scale=0;var core=new CloudPresentationCoordinator(port,clock);
         core.update(input(ANIMATE,false,null,false,false));core.update(input(ANIMATE,true,null,false,false));clock.tick(8);
@@ -76,6 +114,29 @@ public class CloudPresentationCoordinatorTest {
         core.update(input(ANIMATE,false,null,false,false));assertEquals(0,core.current().fraction(),0);clock.settle();
         assertEquals(1,core.current().fraction(),0);assertEquals(CloudPresentationCoordinator.Owner.MODULE,core.current().owner());
         assertFalse(port.requests.contains(CloudPresentationCoordinator.Owner.NATIVE));
+    }
+    @Test public void sceneExitFinishesEvenIfTheNativeSelectionDisappearsBeforeTheDot() {
+        for (boolean hideAtStart : new boolean[]{true, false}) {
+            Port port = new Port();
+            Clock clock = new Clock();
+            var core = new CloudPresentationCoordinator(port, clock);
+            core.update(input(ANIMATE, false, null, false, false));
+            if (!hideAtStart) {
+                core.update(input(ANIMATE, false, CloudScene.RECENTS, false, false));
+                clock.tick(65);
+            }
+            var hiddenByNative = new CloudPresentationCoordinator.Input(HOST, 0, null, false, ANIMATE,
+                    false, false, CloudScene.RECENTS, false, false, false);
+            core.update(hiddenByNative);
+            clock.tick(hideAtStart ? 160 : 95);
+            core.update(hiddenByNative);
+            assertEquals(CloudPresentationCoordinator.Owner.MODULE, core.current().owner());
+            assertTrue(core.current().collapsing());
+            assertEquals(0, core.current().pose().body(), 0);
+            assertTrue(core.current().pose().dot() > 0);
+            clock.settle();
+            assertEquals(CloudPresentationCoordinator.Owner.HIDDEN, core.current().owner());
+        }
     }
     @Test public void rapidReversalsResumeTheCurrentGeometryWithoutRestarting(){
         Port port=new Port();Clock clock=new Clock();var core=new CloudPresentationCoordinator(port,clock);

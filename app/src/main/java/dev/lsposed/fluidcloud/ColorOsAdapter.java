@@ -49,7 +49,7 @@ final class ColorOsAdapter {
 
     ColorOsAdapter(HookEntry module,ClassLoader loader) throws ReflectiveOperationException {
         this.module=module;
-        capsuleOnTop=module.config.extras().capsuleOnTop();
+        capsuleOnTop=module.config.unbindStatusBar() && module.config.extras().capsuleOnTop();
         Class<?> controller=Reflect.type(loader,"com.oplus.systemui.statusbar.seeding.CapsulePluginContainerController");
         Class<?> manager=Reflect.type(loader,"com.oplus.systemui.statusbar.seeding.SeedlingPluginManager");
         Class<?> plugin=Reflect.type(loader,"com.android.systemui.plugins.statusbar.SeedlingPlugin");
@@ -88,6 +88,7 @@ final class ColorOsAdapter {
             for(Method setter:stateSetters)after(setter,chain->{Session current=session;if(current!=null && current.state==chain.getThisObject())current.shadeProgressChanged();});
             before(detach,chain->release(chain.getThisObject()));before(removed,chain->release(chain.getThisObject()));
             installKeyguardHandoff();
+            installSleepHandoff();
             hooks.add(module.hook(handoff).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain->{
                 Session current=session;
                 if(current!=null && current.controller==chain.getThisObject() && current.window!=null)
@@ -116,6 +117,36 @@ final class ColorOsAdapter {
             module.report(DiagnosticPoint.LOCKSCREEN,DiagnosticPoint.State.WAITING);
         }
     }
+    private void installSleepHandoff() {
+        ClassLoader loader = attach.getDeclaringClass().getClassLoader();
+        String keyguard = "com.android.systemui.keyguard.";
+        // Newer builds publish STARTING_TO_SLEEP here before the older
+        // wakefulness dispatch and before the lock-screen UI is brought up.
+        observeLifecycle(loader, "com.android.systemui.power.domain.interactor.PowerInteractor",
+                "onStartedGoingToSleep", current -> current.sleepStarting("power"), int.class);
+        observeLifecycle(loader, keyguard + "WakefulnessLifecycle", "dispatchStartedGoingToSleep",
+                current -> current.sleepStarting("wakefulness"), int.class);
+        observeLifecycle(loader, keyguard + "WakefulnessLifecycle", "dispatchStartedWakingUp", Session::screenWaking, int.class);
+        observeLifecycle(loader, keyguard + "ScreenLifecycle", "dispatchScreenTurningOff",
+                current -> current.sleepStarting("screen-turning-off"));
+        observeLifecycle(loader, keyguard + "ScreenLifecycle", "dispatchScreenTurnedOff",
+                current -> current.screenOff("screen-lifecycle"));
+        observeLifecycle(loader, keyguard + "ScreenLifecycle", "dispatchScreenTurningOn", Session::screenWaking);
+    }
+    private void observeLifecycle(ClassLoader loader, String type, String method,
+                                  java.util.function.Consumer<Session> action, Class<?>... parameters) {
+        try {
+            Class<?> lifecycle = Reflect.type(loader, type);
+            before(Reflect.method(lifecycle, method, void.class, parameters), chain -> {
+                Session current = session;
+                if (current == null) return;
+                if (Looper.myLooper() == Looper.getMainLooper()) action.accept(current);
+                else main.post(() -> { if (session == current) action.accept(current); });
+            });
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+            // Firmware with a different lifecycle still has the keyguard and screen observers.
+        }
+    }
     private interface Observation{void run(XposedInterface.Chain chain);}
     private void after(Method method,Observation observer){
         hooks.add(module.hook(method).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain->{
@@ -127,7 +158,7 @@ final class ColorOsAdapter {
             try{if(!disabled)observer.run(chain);}catch(RuntimeException|LinkageError error){disable(error);}return chain.proceed();
         }));
     }
-    private void capture(Object controller){
+    void capture(Object controller){
         if(disabled || Looper.myLooper()!=Looper.getMainLooper())return;
         ViewGroup host=(ViewGroup)Reflect.get(hostField,controller);
         if(!host.isAttachedToWindow() || host.getDisplay()==null || host.getDisplay().getDisplayId()!=Display.DEFAULT_DISPLAY || root(host)==null)return;
@@ -243,10 +274,21 @@ final class ColorOsAdapter {
             DisplayManager.DisplayListener displayListener=new DisplayManager.DisplayListener(){
                 public void onDisplayAdded(int id){environment.invalidate();signal();}
                 public void onDisplayRemoved(int id){environment.invalidate();signal();}
-                public void onDisplayChanged(int id){cameraDirty=true;environment.invalidate();signal();}
+                public void onDisplayChanged(int id){
+                    cameraDirty=true;environment.invalidate();
+                    if (id==Display.DEFAULT_DISPLAY && !lockExitVisible()) stopLockExit("display-state");
+                    signal();
+                }
             };
             displays.registerDisplayListener(displayListener,main);cleanup.add(()->displays.unregisterDisplayListener(displayListener));
-            BroadcastReceiver receiver=new BroadcastReceiver(){public void onReceive(Context c,Intent intent){cameraDirty=true;environment.invalidate();refreshNow();}};
+            BroadcastReceiver receiver=new BroadcastReceiver(){public void onReceive(Context c,Intent intent){
+                cameraDirty=true;environment.invalidate();
+                switch (intent.getAction()) {
+                    case Intent.ACTION_SCREEN_OFF -> screenOff("screen-off-broadcast");
+                    case Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> screenWaking();
+                    default -> { stopLockExit("configuration"); refreshNow(); }
+                }
+            }};
             IntentFilter filter=new IntentFilter();for(String action:new String[]{Intent.ACTION_SCREEN_OFF,Intent.ACTION_SCREEN_ON,Intent.ACTION_USER_PRESENT,Intent.ACTION_CONFIGURATION_CHANGED})filter.addAction(action);
             context.registerReceiver(receiver,filter,Context.RECEIVER_NOT_EXPORTED);cleanup.add(()->context.unregisterReceiver(receiver));
             View.OnAttachStateChangeListener attachment=new View.OnAttachStateChangeListener(){
@@ -380,24 +422,67 @@ final class ColorOsAdapter {
         }
         CloudConfig sceneConfig(){return module.config.forOrientation(landscape());}
         boolean landscape(){return host.getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE;}
-        private boolean keyguardHandoff;
+        private boolean keyguardHandoff, sleeping;
         void keyguardEntering(){
             if(keyguardHandoff || closed)return;
+            // Some builds reach the keyguard callback before the sleep observers.
+            // Only use it as a visual start while the display is still rendering
+            // an unlocked capsule and the power manager has begun sleep.
+            boolean animate = !sleeping && window != null && window.contentVisible()
+                    && lockExitVisible() && !power.isInteractive();
             keyguardHandoff=true;
-            environment.invalidate();
-            try{
-                coordinator.returnToNative();
-                if(retention!=null)retention.restore();
-                module.report(DiagnosticPoint.LOCKSCREEN,DiagnosticPoint.State.NATIVE);
-            }catch(RuntimeException|LinkageError error){windowFailure(error);}
+            if (!sleeping) {
+                sleeping = animate;
+                leaveUnlockedPresentation(animate, "keyguard");
+            }
         }
         void keyguardLeaving(){
             if(!keyguardHandoff)return;
             keyguardHandoff=false;
+            stopLockExit("keyguard-dismissed");
             module.report(DiagnosticPoint.LOCKSCREEN,DiagnosticPoint.State.READY);
             refreshNow();
         }
-        boolean allowed(){return !keyguardHandoff && !closed && !disabled && host.isAttachedToWindow() && root(host)!=null && environment.get(()->{
+        void sleepStarting(String signal) {
+            if (sleeping || closed || !module.config.lockExitEnabled()) return;
+            sleeping = true;
+            if (!keyguardHandoff) leaveUnlockedPresentation(true, signal);
+        }
+        private void leaveUnlockedPresentation(boolean animate, String signal) {
+            environment.invalidate();
+            try {
+                if (animate && window != null) window.beginLockExit(this::lockExitVisible, signal);
+                coordinator.returnToNative();
+                if (retention != null) retention.restore();
+                module.report(DiagnosticPoint.LOCKSCREEN, DiagnosticPoint.State.NATIVE);
+            } catch (RuntimeException | LinkageError error) { windowFailure(error); }
+        }
+        private boolean lockExitVisible() {
+            if (closed || disabled || !module.config.lockExitEnabled() || !host.isAttachedToWindow()) return false;
+            Display display = host.getDisplay();
+            return display != null && display.getDisplayId() == Display.DEFAULT_DISPLAY && display.getState() == Display.STATE_ON;
+        }
+        private void stopLockExit(String reason) {
+            try { if (window != null) window.endLockExit(reason); }
+            catch (RuntimeException | LinkageError error) { windowFailure(error); }
+        }
+        void screenOff(String signal) {
+            // ColorOS can report SCREEN_OFF when it requests doze, while the
+            // real display is still ON and presenting the panorama transition.
+            if (lockExitVisible()) {
+                sleepStarting(signal);
+                return;
+            }
+            sleeping = true;
+            stopLockExit(signal);
+            signal();
+        }
+        void screenWaking() {
+            sleeping = false;
+            stopLockExit("waking");
+            refreshNow();
+        }
+        boolean allowed(){return !sleeping && !keyguardHandoff && !closed && !disabled && host.isAttachedToWindow() && root(host)!=null && environment.get(()->{
             Display display=host.getDisplay();return display!=null && display.getDisplayId()==Display.DEFAULT_DISPLAY && display.getState()==Display.STATE_ON && power.isInteractive()
                     && !keyguard.isKeyguardLocked() && !(boolean)Reflect.call(keyguardShowing,state) && (int)Reflect.call(statusBarState,state)==0;
         });}
@@ -429,20 +514,39 @@ final class ColorOsAdapter {
             for(Rect bounds:cutout.getBoundingRects())if(!bounds.isEmpty() && bounds.width()<=max && bounds.height()<=max){cameraAnchor=new RectF(bounds);break;}
             return cameraAnchor;
         }
+        int capsuleOverflowY() { return module.capsuleOverflowY(root(host)); }
         void runRefresh(){
             queued=false;if(closed)return;if(refreshing){signal();return;}refreshing=true;
             try{
+                if (window != null && window.hasLockHandoff()) {
+                    if (!lockExitVisible()) stopLockExit("display-or-settings");
+                    else window.restoreHiddenLockSource();
+                }
                 CloudConfig effective=sceneConfig().withCapsuleOnTop(capsuleOnTop);
                 scope.refresh((ViewGroup)Reflect.get(fakeHostField,controller));
                 NativeVisibilityProbe.Snapshot facts=visibility.snapshot(host);Object identity=interaction.contentIdentity(host);
                 if(identity==null && interaction.blankRecoverable(host))identity=lastIdentity;else lastIdentity=identity;
                 int windowState=nativeWindow.value();boolean fullscreen=windowState==1 || windowState==2;
-                boolean protectedState=!allowed() || facts.protectedState() || windowState<0;
                 CloudScene top=facts.scene()!=null?facts.scene():fullscreen?CloudScene.FULLSCREEN:null;
-                if(top!=null && effective.mode(top)==CloudSceneMode.ANIMATE && camera()==null)protectedState=true;
                 boolean shadeExpanded=shadeActive();lastShade=shadeExpanded;
+                boolean extendedPlacement = capsuleOverflowY() > 0;
+                // Live changes can install the hooks after the binder's initial emission.
+                boolean visibleHost = (extendedPlacement || effective.lockExitEnabled())
+                        && facts == NativeVisibilityProbe.Snapshot.UNKNOWN
+                        && windowState == 0 && !shadeExpanded && host.isShown()
+                        && host.getWindowVisibility() == View.VISIBLE && host.getAlpha() > 0f;
+                boolean unlocked = allowed();
+                if (!unlocked && !sleeping && !keyguardHandoff && window != null && window.contentVisible()
+                        && lockExitVisible() && !power.isInteractive()) {
+                    sleepStarting("not-interactive");
+                    signal();
+                    return;
+                }
+                boolean protectedState=!unlocked || (facts.protectedState() && !visibleHost) || windowState<0;
+                if(top!=null && effective.mode(top)==CloudSceneMode.ANIMATE && camera()==null)protectedState=true;
                 coordinator.update(new CloudPresentationCoordinator.Input(host,host.getDisplay()==null?-1:host.getDisplay().getDisplayId(),identity,identity!=null,
-                        effective,landscape(),fullscreen,facts.scene(),shadeExpanded,protectedState,facts.visible()));
+                        effective,landscape(),fullscreen,facts.scene(),shadeExpanded,protectedState,
+                        facts.visible() || visibleHost,extendedPlacement));
                 if(android.util.Log.isLoggable("COSPresentation",android.util.Log.DEBUG)){
                     var output=coordinator.current();
                     String diagnostic="Presentation state visible="+facts.visible()+" protected="+protectedState+" scene="+facts.scene()+" content="+(identity!=null)+" shade="+shadeExpanded+" retain="+retainShade()+" owned="+coordinator.ownsContent()+" output="+output.owner()+" fraction="+Math.round(output.fraction()*1000)/1000d;
@@ -466,7 +570,11 @@ final class ColorOsAdapter {
                     if(window==null)window=new PresentationWindow(host,this::camera,this::allowed,coordinator::accepts,
                             this::signal,coordinator::invalidate,this::windowFailure,false);
                     window.corners=()->module.config.corners().capsule();
-                    window.prepareContent=()->{if(content!=null)content.update(coordinator.ownsContent());scope.refreshSources();};
+                    window.verticalOffset=this::capsuleOverflowY;
+                    window.prepareContent=()->{
+                        if(content!=null && contentActive)content.update(true);
+                        scope.refreshSources();
+                    };
                     window.source.recoverBlank=()->retainShade() && interaction.blankRecoverable(host);
                     window.source.retainRecovery=()->retainShade() && interaction.hasRecoverableItems(host);
                 }
@@ -483,7 +591,10 @@ final class ColorOsAdapter {
             }
         }
         @Override public void cancelTouch(){if(window!=null)window.cancelTouch();}
-        void setContentActive(boolean active){if(content!=null && contentActive!=active){contentActive=active;content.update(active);}}
+        void setContentActive(boolean active){
+            active &= module.config.scenesEnabled();
+            if(content!=null && contentActive!=active){contentActive=active;content.update(active);}
+        }
         @Override public void release(){if(window!=null)window.release();setContentActive(false);}
         @Override public void failure(Throwable error){
             cardLaunch.cancel();

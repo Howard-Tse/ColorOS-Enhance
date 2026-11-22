@@ -137,7 +137,9 @@ public final class SettingsCatalog {
         items.add(flag("展开卡片","card_continuous_corners","展开卡片连续圆角",
                 "启用自定义圆角后，使直边与弯曲边缘平滑衔接。重新展开卡片后生效。"));
         items.add(flag("场景控制","unbind_status_bar","流体云与状态栏解绑",
-                "开启后重启系统界面，并在下方的竖屏或横屏场景中选择「保持显示」或「动画补全」。未配置的场景仍跟随系统。动态胶囊可能增加耗电。"));
+                "开启后重启系统界面。可在下方为竖屏或横屏选择「保持显示」或「动画补全」。未配置的场景仍跟随系统。动态胶囊可能增加耗电。"));
+        items.add(flag("场景控制","capsule_lock_exit","锁屏时收缩胶囊",
+                "锁屏时让可见的流体云胶囊收缩并渐隐。可独立于「流体云与状态栏解绑」开启。"));
         items.add(flag("场景控制","capsule_on_top","流体云胶囊置顶",
                 "提高胶囊窗口层级，胶囊可显示在展开卡片上方。修改后重启系统界面。"));
         items.add(flag("场景控制","capsule_keep_during_launch","应用转场时保持胶囊显示",
@@ -158,7 +160,9 @@ public final class SettingsCatalog {
                 "负值向左，正值向右，0 dp 为原厂位置。偏移受状态栏可用空间限制。",
                 horizontal, 0, -CapsulePosition.HORIZONTAL_LIMIT_DP, CapsulePosition.HORIZONTAL_LIMIT_DP, 1, 1, "dp"));
         items.add(value("小胶囊位置", vertical, orientation + "纵向位置",
-                "负值向上，正值向下，0 dp 为原厂位置。可移动距离随胶囊高度变化。",
+                "capsule_".equals(prefix)
+                        ? "负值向上，正值向下，0 dp 为原厂位置。竖屏解锁后可下移至状态栏下方。"
+                        : "负值向上，正值向下，0 dp 为原厂位置。可移动距离随胶囊高度变化。",
                 vertical, 0, -CapsulePosition.VERTICAL_LIMIT_DP, CapsulePosition.VERTICAL_LIMIT_DP, 1, 1, "dp"));
     }
     private static void addOrientationScenes(List<Item> items, String orientation, String prefix) {
@@ -190,7 +194,7 @@ public final class SettingsCatalog {
         if ("shade_collapse_on_open".equals(key) && !Boolean.TRUE.equals(values.get("shade_keep"))) return false;
         if ("landscape_shade_collapse_on_open".equals(key) && !Boolean.TRUE.equals(values.get("landscape_shade_keep"))) return false;
         return "keep_paused_music".equals(key) || "media_card_in_shade".equals(key) || "realtime_media_wave".equals(key) || "block_capsule_click_top".equals(key)
-                || "camera_card_expansion".equals(key) || "unbind_status_bar".equals(key)
+                || "camera_card_expansion".equals(key) || "unbind_status_bar".equals(key) || "capsule_lock_exit".equals(key)
                 || List.of("hide_capsule_stroke","hide_capsule_arrows","capsule_keep_in_foreground","skip_empty_capsule","card_dim_enabled",
                         "capsule_corners_enabled","card_corners_enabled","capsule_size_enabled","capsule_offset_x_dp","capsule_offset_y_dp",
                         "capsule_landscape_offset_x_dp","capsule_landscape_offset_y_dp",

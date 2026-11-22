@@ -5,6 +5,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
+import java.lang.ref.WeakReference;
 import dev.howard.colorosenhance.diagnostics.DiagnosticPoint;
 import dev.howard.colorosenhance.diagnostics.SeedlingSdkDiagnostics;
 import io.github.libxposed.api.XposedInterface;
@@ -19,6 +20,21 @@ final class CloudExtras {
     private final Field host,fakeHost;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ArrayList<Session> sessions=new ArrayList<>();
+    private WeakReference<Object> capsuleController = new WeakReference<>(null);
+    private final Runnable refreshHost = this::refreshCapsuleHost;
+    private void refreshCapsuleHost() {
+        Object controller = capsuleController.get();
+        if (controller == null) return;
+        ViewGroup view = (ViewGroup) Reflect.get(host, controller);
+        if (!view.isAttachedToWindow()) return;
+        for (int i = 0; i < view.getChildCount(); i++) {
+            View root = view.getChildAt(i);
+            if (root.getClass().getName().equals(NativeCapsuleAppearance.VIEWS + "CapsuleContainerRoot")) {
+                module.capsuleHostChanged(controller, overflowY(root));
+                return;
+            }
+        }
+    }
     CloudExtras(HookEntry module,ClassLoader loader)throws ReflectiveOperationException{
         this.module=module;
         Class<?> owner=Reflect.type(loader,"com.oplus.systemui.statusbar.seeding.CapsulePluginContainerController");
@@ -51,6 +67,9 @@ final class CloudExtras {
         for(int i=0;i<view.getChildCount();i++){
             View root=view.getChildAt(i);
             if(!root.getClass().getName().equals(NativeCapsuleAppearance.VIEWS+"CapsuleContainerRoot"))continue;
+            if (view.getDisplay() != null && view.getDisplay().getDisplayId() == android.view.Display.DEFAULT_DISPLAY) {
+                capsuleController = new WeakReference<>(owner);
+            }
             try {
                 SeedlingSdkDiagnostics.attach(view.getContext(), root.getClass().getClassLoader(), PluginClasses::seedlingPaths);
             } catch (RuntimeException | LinkageError unavailable) {
@@ -66,9 +85,24 @@ final class CloudExtras {
             View fake=fakeHost==null?null:(View)Reflect.get(fakeHost,owner);
             if(fake!=null){existing.roots.add(fake);if(existing.wave!=null)existing.wave.root(fake);}
             existing.refresh();
+            if (overflowY(root) > 0 || module.needsLockExitAdapter()) scheduleHostRefresh();
         }
     }
-    void configurationChanged(){main.post(()->{for(Session session:sessions)session.refresh();});}
+    void configurationChanged() {
+        main.post(() -> {
+            for (Session session : sessions) session.refresh();
+            if (module.needsLockExitAdapter()) scheduleHostRefresh();
+        });
+    }
+    private void scheduleHostRefresh() {
+        if (!main.hasCallbacks(refreshHost)) main.post(refreshHost);
+    }
+    int overflowY(View root) {
+        for (Session session : sessions) {
+            if (session.position != null && session.roots.contains(root)) return session.position.overflowY(root);
+        }
+        return 0;
+    }
     private final class Session {
         final ClassLoader loader;
         final java.util.Set<View> roots=java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
@@ -144,6 +178,7 @@ final class CloudExtras {
             start=hooks.size();
             try {
                 position = new NativeCapsulePosition(lookup);
+                position.overflowChanged = CloudExtras.this::scheduleHostRefresh;
                 hooks.add(module.hook(position.layout).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
                         .intercept(chain -> {
                             Object result = chain.proceed();

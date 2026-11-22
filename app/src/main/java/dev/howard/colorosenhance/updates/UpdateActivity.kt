@@ -20,10 +20,12 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.core.view.WindowCompat
 import dev.howard.colorosenhance.BuildConfig
+import dev.howard.colorosenhance.EnhanceApplication
 import dev.howard.colorosenhance.SettingsIcons
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.*
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.ThemeController
@@ -39,6 +41,7 @@ class UpdateActivity : AppCompatActivity() {
 
 @Composable
 private fun UpdateScreen(activity: UpdateActivity) {
+    val app = activity.application as EnhanceApplication
     val appearance = remember { activity.getSharedPreferences("ui_presentation", Context.MODE_PRIVATE).getInt("appearance", 0).coerceIn(0, 2) }
     val lightBars = when (appearance) { 1 -> true; 2 -> false; else -> !isSystemInDarkTheme() }
     SideEffect {
@@ -51,12 +54,14 @@ private fun UpdateScreen(activity: UpdateActivity) {
         1 -> ColorSchemeMode.MonetLight; 2 -> ColorSchemeMode.MonetDark; else -> ColorSchemeMode.MonetSystem
     }) }
     var request by rememberSaveable { mutableIntStateOf(0) }
+    var includePrereleases by remember { mutableStateOf(app.prefersPrereleases()) }
     var loading by remember { mutableStateOf(true) }
     var result by remember { mutableStateOf<GitHubUpdateClient.Result?>(null) }
-    LaunchedEffect(request) {
+    LaunchedEffect(request, includePrereleases) {
+        val selectedChannel = includePrereleases
         loading = true
         result = null
-        result = withContext(Dispatchers.IO) { GitHubUpdateClient().check() }
+        result = withContext(Dispatchers.IO) { GitHubUpdateClient().check(selectedChannel) }
         loading = false
     }
     MiuixTheme(controller = theme) {
@@ -72,17 +77,29 @@ private fun UpdateScreen(activity: UpdateActivity) {
                 LazyColumn(Modifier.fillMaxSize().padding(padding),
                     contentPadding = PaddingValues(20.dp, 12.dp, 20.dp, 32.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()),
                     verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    item("channel") {
+                        Card(Modifier.fillMaxWidth()) {
+                            SwitchPreference(includePrereleases, { include ->
+                                app.setPreferPrereleases(include)
+                                includePrereleases = include
+                                result = null
+                                loading = true
+                            }, "优先检查预发布版本", summary = "开启后可收到比正式版更新的预发布版。关闭时只检查正式版。")
+                        }
+                    }
                     item("status") {
                         Card(Modifier.fillMaxWidth()) {
                             val release = result?.release()
+                            val channel = if (release?.prerelease() == true) "预发布版" else "正式版"
                             val title = when {
                                 loading -> "正在检查…"
                                 release == null -> "检查未完成"
-                                release.newerThan(BuildConfig.VERSION_CODE.toLong()) -> "发现新版本 ${release.versionName()}"
-                                else -> "当前已是最新版本"
+                                release.newerThan(BuildConfig.VERSION_CODE.toLong()) ->
+                                    "${if (release.prerelease()) "发现预发布版" else "发现新版本"} ${release.versionName()}"
+                                else -> "暂无更新"
                             }
                             BasicComponent(title = title, summary = "当前版本 ${BuildConfig.VERSION_NAME}" +
-                                if (release == null) "" else " · 最新正式版 ${release.versionName()}")
+                                if (release == null) "" else " · 可用$channel ${release.versionName()}")
                             if (!loading && release == null) Text(result?.error().orEmpty(), Modifier.padding(horizontal = 20.dp, vertical = 12.dp), fontSize = 14.sp)
                             TextButton(if (loading) "正在检查…" else "重新检查", { if (!loading) request++ }, Modifier.fillMaxWidth().padding(12.dp))
                             if (!loading && release != null && release.newerThan(BuildConfig.VERSION_CODE.toLong()))
@@ -105,7 +122,7 @@ private fun UpdateScreen(activity: UpdateActivity) {
                         }
                     }
                     item("privacy") {
-                        Text("应用每次打开时检查一次正式版，有更新才弹窗；也可在此手动检查，不在后台定时联网。通过 HTTPS 访问 GitHub，不发送模块配置、媒体数据或设备标识；GitHub 会收到网络请求的 IP 地址。下载和安装由你在浏览器及安装器中确认。",
+                        Text("应用每次打开时按此设置检查一次，有更新才弹窗。也可在此手动检查。通过 HTTPS 访问 GitHub，不发送模块配置、媒体数据或设备标识；GitHub 会收到网络请求的 IP 地址。下载和安装由你在浏览器及安装器中确认。",
                             Modifier.padding(horizontal = 8.dp), fontSize = 12.sp, color = colors.onSurfaceVariantSummary)
                     }
                 }

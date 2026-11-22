@@ -1,20 +1,23 @@
 package dev.howard.colorosenhance.updates;
 
 import java.util.concurrent.Executor;
-import java.util.function.Supplier;
+import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 
 /** Main-thread state: one silent check per foreground visit, shared by all settings pages. */
 public final class LaunchUpdateCheck {
     private final Executor worker, main;
-    private final Supplier<GitHubUpdateClient.Result> job;
+    private final BooleanSupplier includePrereleases;
+    private final Function<Boolean, GitHubUpdateClient.Result> job;
     private final long installedCode;
     private final Runnable changed;
     private boolean foreground, checked, running;
     private ReleaseInfo pending;
 
-    public LaunchUpdateCheck(Executor worker, Executor main, Supplier<GitHubUpdateClient.Result> job,
-                             long installedCode, Runnable changed) {
-        this.worker=worker; this.main=main; this.job=job; this.installedCode=installedCode; this.changed=changed;
+    public LaunchUpdateCheck(Executor worker, Executor main, BooleanSupplier includePrereleases,
+                             Function<Boolean, GitHubUpdateClient.Result> job, long installedCode, Runnable changed) {
+        this.worker=worker; this.main=main; this.includePrereleases=includePrereleases;
+        this.job=job; this.installedCode=installedCode; this.changed=changed;
     }
     public void foreground() {
         if(foreground)return;
@@ -29,10 +32,11 @@ public final class LaunchUpdateCheck {
         // A quick exit/re-entry can reuse the still-running request rather than overlap requests.
         if(running)return;
         running=true;
+        boolean preview = includePrereleases.getAsBoolean();
         try {
             worker.execute(()->{
                 GitHubUpdateClient.Result result;
-                try { result=job.get(); } catch(RuntimeException unavailable) { result=null; }
+                try { result=job.apply(preview); } catch(RuntimeException unavailable) { result=null; }
                 GitHubUpdateClient.Result completed=result;
                 main.execute(()->complete(completed));
             });
@@ -42,7 +46,10 @@ public final class LaunchUpdateCheck {
         running=false;
         if(!foreground || !checked)return;
         ReleaseInfo release=result==null?null:result.release();
-        if(release!=null && release.newerThan(installedCode)) { pending=release; changed.run(); }
+        if(release!=null && release.newerThan(installedCode)
+                && (!release.prerelease() || includePrereleases.getAsBoolean())) {
+            pending=release; changed.run();
+        }
     }
     public ReleaseInfo pending() { return foreground?pending:null; }
     public void dismiss() { pending=null; changed.run(); }

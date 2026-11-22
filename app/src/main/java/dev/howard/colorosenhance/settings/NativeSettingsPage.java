@@ -97,7 +97,7 @@ final class NativeSettingsPage {
             }));
             Object about=category("about","关于");
             Object updates=jump(about,"check_updates","检查更新",()->dev.howard.colorosenhance.updates.UpdateLinks.check(context));
-            host.call(updates,"setSummary","当前版本 "+dev.howard.colorosenhance.BuildConfig.VERSION_NAME+" · 在模块应用中手动检查正式版");
+            host.call(updates,"setSummary","当前版本 "+dev.howard.colorosenhance.BuildConfig.VERSION_NAME+" · 手动检查与版本选项");
             Object repository=jump(about,"github_repository","GitHub 仓库",()->dev.howard.colorosenhance.updates.UpdateLinks.repository(context));
             host.call(repository,"setSummary","源码、使用说明与问题反馈");
         } else if("sim_slots".equals(route)) {

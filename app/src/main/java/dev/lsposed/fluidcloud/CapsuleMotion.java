@@ -21,6 +21,11 @@ final class CapsuleMotion {
     private boolean showing, running;
     private double elapsed, dotDuration, bodyDuration;
 
+    static float dotOpacity(float remainingSize) {
+        // Keep a readable dot until the final part of its contraction.
+        return Math.max(0f, Math.min(1f, remainingSize / .4f));
+    }
+
     Pose current(){return current;}
     boolean moving(){return running;}
     void snap(boolean visible){current=visible?FULL:HIDDEN;start=current;running=false;elapsed=0;}

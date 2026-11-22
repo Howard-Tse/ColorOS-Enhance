@@ -14,11 +14,12 @@ final class NativeCapsulePosition {
     final Method hidden;
     private final WeakHashMap<ViewGroup, Origin> origins = new WeakHashMap<>();
     private final Rect bounds = new Rect();
+    Runnable overflowChanged = () -> { };
     private CapsulePosition portrait = CapsulePosition.OEM;
     private CapsulePosition landscape = CapsulePosition.OEM;
 
     private static final class Origin {
-        int left, top;
+        int left, top, overflowY;
         final Rect capsuleBounds = new Rect();
 
         Origin(View view) {
@@ -77,9 +78,10 @@ final class NativeCapsulePosition {
     private void apply(ViewGroup container, Origin origin) {
         int x = origin.left;
         int y = origin.top;
+        int overflowY = 0;
         if (container.getParent() instanceof View root && root.getWidth() > 0 && root.getHeight() > 0) {
-            CapsulePosition position = root.getResources().getConfiguration().orientation
-                    == Configuration.ORIENTATION_LANDSCAPE ? landscape : portrait;
+            boolean isLandscape = root.getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
+            CapsulePosition position = isLandscape ? landscape : portrait;
             if (!position.equals(CapsulePosition.OEM)) {
                 // The container may fill its parent. Clamp using the visible pill and arrows,
                 // and leave the camera-only mini state in the stock frame.
@@ -100,13 +102,30 @@ final class NativeCapsulePosition {
                     float density = root.getResources().getDisplayMetrics().density;
                     x += CapsulePosition.fit(Math.round(position.horizontalDp() * density),
                             x + capsuleBounds.left, x + capsuleBounds.right, root.getWidth());
-                    y += CapsulePosition.fit(Math.round(position.verticalDp() * density),
+                    int requestedY = Math.round(position.verticalDp() * density);
+                    int nativeY = CapsulePosition.fit(requestedY,
                             y + capsuleBounds.top, y + capsuleBounds.bottom, root.getHeight());
+                    y += nativeY;
+                    if (!isLandscape) overflowY = Math.max(0, requestedY - nativeY);
                 }
             }
         }
         container.offsetLeftAndRight(x - container.getLeft());
         container.offsetTopAndBottom(y - container.getTop());
+        if (origin.overflowY != overflowY) {
+            origin.overflowY = overflowY;
+            overflowChanged.run();
+        }
+    }
+
+    int overflowY(View root) {
+        if (!rootType.isInstance(root) || !(root instanceof ViewGroup group)
+                || root.getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE) return 0;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            Origin origin = origins.get(group.getChildAt(i));
+            if (origin != null) return origin.overflowY;
+        }
+        return 0;
     }
 
     void close() {

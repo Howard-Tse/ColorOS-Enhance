@@ -9,7 +9,7 @@ public enum DiagnosticPoint {
     WALLPAPER(Scope.ENGINE, "aod", "dim_enabled", "多彩引擎背景压暗"),
     SCENES(Scope.UI, "cloud", "unbind_status_bar", "状态栏插件与场景交接"),
     SCENE_HOST(Scope.UI, "cloud", "unbind_status_bar", "胶囊原生宿主"),
-    LOCKSCREEN(Scope.UI, "cloud", "unbind_status_bar", "锁屏显示权交还"),
+    LOCKSCREEN(Scope.UI, "cloud", "capsule_lock_exit", "锁屏时胶囊收缩"),
     MEDIA_SHADE(Scope.UI, "cloud", "media_card_in_shade", "媒体卡片分发到通知中心"),
     MEDIA_SHADE_ROUTE(Scope.UI, "cloud", "media_card_in_shade", "媒体通知中心投递"),
     MEDIA_SHADE_ROW(Scope.UI, "cloud", "media_card_in_shade", "通知中心原生媒体行"),

@@ -99,8 +99,9 @@ public class NativeCapsuleSourceTest {
         assertEquals(2772,NativeCapsuleSource.viewportHeight(new android.graphics.RectF(0,0,1272,Float.NaN),2772,45));
         assertEquals(2772,NativeCapsuleSource.viewportHeight(new android.graphics.RectF(),2772,45));
         var independent=new NativeCapsuleSource(host,true);
-        int height=independent.viewportHeight(window,1000);
+        int height=independent.viewportHeight(window,1000,0);
         assertTrue(height>=120);assertTrue(height<200);
+        assertTrue(independent.viewportHeight(window,1000,32)>height);
         window.layout(0,0,500,height);independent.refresh(window,region);
         assertTrue(region.contains(65,35)); // reducing surface height preserves native touch coordinates
     }

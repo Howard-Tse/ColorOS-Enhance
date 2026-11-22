@@ -7,12 +7,21 @@ final class CloudPresentationCoordinator {
     enum Owner { NATIVE, MODULE, HIDDEN }
     record Input(Object session, int display, Object content, boolean contentAvailable,
                  CloudConfig config, boolean landscape, boolean fullscreen, CloudScene scene,
-                 boolean shade, boolean protectedState, boolean nativeVisible) {
+                 boolean shade, boolean protectedState, boolean nativeVisible, boolean extendedPlacement) {
         Input { Objects.requireNonNull(session); Objects.requireNonNull(config); }
+        Input(Object session, int display, Object content, boolean contentAvailable, CloudConfig config,
+              boolean landscape, boolean fullscreen, CloudScene scene, boolean shade, boolean protectedState,
+              boolean nativeVisible) {
+            this(session, display, content, contentAvailable, config, landscape, fullscreen, scene,
+                    shade, protectedState, nativeVisible, false);
+        }
     }
     record Ticket(long epoch, long revision) { }
-    record Frame(Ticket ticket, Object content, Owner owner, double fraction, CapsuleMotion.Pose pose) {
-        Frame(Ticket ticket,Object content,Owner owner,double fraction){this(ticket,content,owner,fraction,null);}
+    record Frame(Ticket ticket, Object content, Owner owner, double fraction, CapsuleMotion.Pose pose, boolean collapsing) {
+        Frame(Ticket ticket,Object content,Owner owner,double fraction){this(ticket,content,owner,fraction,null,false);}
+        Frame(Ticket ticket,Object content,Owner owner,double fraction,CapsuleMotion.Pose pose){
+            this(ticket,content,owner,fraction,pose,false);
+        }
     }
     interface Port {
         void prepare(Object content);
@@ -78,7 +87,9 @@ final class CloudPresentationCoordinator {
                 } else request(Owner.NATIVE);
                 return;
             }
-            if(missing){
+            boolean finishCollapse = policy == 0 && controlled && committed == Owner.MODULE && !suspended
+                    && (target == 1 || motion.moving());
+            if(missing && !finishCollapse){
                 // Native expanded cards temporarily replace the small capsule. Keep
                 // the already acquired surface/gate and SDK presentation configuration,
                 // but publish no pixels or input. Re-entry must not wait for a new
@@ -102,7 +113,12 @@ final class CloudPresentationCoordinator {
     }
     private static int policy(Input value) {
         CloudConfig config = value.config();
-        if (!config.scenesEnabled() || value.protectedState() || value.display() != 0) return -1;
+        if (!config.enabled() || value.protectedState() || value.display() != 0) return -1;
+        boolean extended = value.extendedPlacement() && !value.landscape();
+        if (!config.scenesEnabled()) {
+            return (extended || config.lockExitEnabled()) && value.nativeVisible() && !value.shade() && !value.fullscreen()
+                    && value.scene() == null ? 1 : -1;
+        }
         if (value.shade()) return config.retainInShade() ? 1 : -1;
         CloudScene scene = value.scene() != null ? value.scene() : value.fullscreen() ? CloudScene.FULLSCREEN : null;
         if (scene != null) return switch (config.mode(scene)) {
@@ -110,7 +126,9 @@ final class CloudPresentationCoordinator {
             case ANIMATE -> 0;
             case OEM -> -1;
         };
-        boolean configured = config.mode(CloudScene.FULLSCREEN) != CloudSceneMode.OEM
+        // Lock exit also needs the capsule ready before the screen-off fade starts.
+        boolean configured = extended || config.lockExitEnabled()
+                || config.mode(CloudScene.FULLSCREEN) != CloudSceneMode.OEM
                 || config.mode(CloudScene.RECENTS) != CloudSceneMode.OEM
                 || config.mode(CloudScene.OTHER) != CloudSceneMode.OEM || config.retainInShade()
                 || config.capsuleOnTop() || config.keepCapsuleDuringLaunch();
@@ -120,12 +138,14 @@ final class CloudPresentationCoordinator {
         if (!controlled || input == null) return;
         Owner owner = suspended || !moving() && target == 0 ? Owner.HIDDEN : Owner.MODULE;
         CapsuleMotion.Pose pose=suspended?CapsuleMotion.HIDDEN:motion.current();
+        Frame output = new Frame(ticket, input.content(), owner, pose.visibility(), pose,
+                owner == Owner.MODULE && target == 0);
         if (owner != committed || waiting) {
-            port.render(new Frame(ticket, input.content(), owner, pose.visibility(),pose));
+            port.render(output);
             request(owner);
             return;
         }
-        port.render(new Frame(ticket, input.content(), owner, pose.visibility(),pose));
+        port.render(output);
         if (moving()) schedule(); else stopFrames();
     }
     private void request(Owner owner) {
@@ -180,7 +200,8 @@ final class CloudPresentationCoordinator {
     }
     boolean ownsContent() { return !closed && !failed && controlled; }
     boolean accepts(Ticket value) { return !closed && !failed && value != null && value.equals(ticket); }
-    Frame current() {var pose=suspended?CapsuleMotion.HIDDEN:motion.current();return new Frame(ticket, input == null ? null : input.content(), committed, pose.visibility(),pose); }
+    Frame current() {var pose=suspended?CapsuleMotion.HIDDEN:motion.current();return new Frame(ticket,
+            input == null ? null : input.content(), committed, pose.visibility(),pose, committed==Owner.MODULE && target==0); }
     private void fail(Throwable error) {
         if (failed || closed) return;
         failed = true;

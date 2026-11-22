@@ -235,7 +235,8 @@ private fun SettingsApp(activity: MainActivity, route: String, update: Int) {
                 }
             }
         }
-        if (launchRelease != null) WindowDialog(show = true, title = "发现新版本 ${launchRelease.versionName()}",
+        if (launchRelease != null) WindowDialog(show = true,
+            title = "${if (launchRelease.prerelease()) "发现预发布版" else "发现新版本"} ${launchRelease.versionName()}",
             summary = "当前版本 ${BuildConfig.VERSION_NAME}", onDismissRequest = { app.launchUpdates().dismiss() }) {
             if (launchRelease.hasNotes()) Column(Modifier.heightIn(max = 320.dp).verticalScrollCompat()) {
                 dev.howard.colorosenhance.updates.ReleaseNotesText(launchRelease, Modifier.padding(top = 12.dp))
@@ -387,7 +388,7 @@ private fun Management(app: EnhanceApplication, controller: SettingsUiController
         item("about") {
             Card(Modifier.fillMaxWidth()) {
                 BasicComponent(title = "ColorOS 增强", summary = "${BuildConfig.VERSION_NAME} · ColorOS 16 / 17")
-                NavigationRow("检查更新", "当前版本 ${BuildConfig.VERSION_NAME} · 手动检查正式版", { dev.howard.colorosenhance.updates.UpdateLinks.check(activity) })
+                NavigationRow("检查更新", "当前版本 ${BuildConfig.VERSION_NAME} · 手动检查与版本选项", { dev.howard.colorosenhance.updates.UpdateLinks.check(activity) })
                 NavigationRow("GitHub 仓库", "源码、使用说明与问题反馈", { dev.howard.colorosenhance.updates.UpdateLinks.repository(activity) })
                 NavigationRow("开源许可", "MIT · 第三方许可", { onModal(SettingsModal.Licenses) })
             }

@@ -52,4 +52,14 @@ public class CapsulePresentationGeometryTest {
         var nativeCurve=new android.view.animation.PathInterpolator(.3f,0,.1f,1);
         for(int i=0;i<=100;i++)assertEquals(nativeCurve.getInterpolation(i/100f),CapsuleMotion.curve(i/100d),.01);
     }
+    @Test public void extendedPlacementMovesBothPixelsAndTouchCoordinates() {
+        RectF source = new RectF(50, 10, 250, 40);
+        var shifted = CapsulePresentationGeometry.offsetVertically(CapsulePresentationGeometry.steady(source), 32);
+        assertEquals(new RectF(50, 42, 250, 72), shifted.bounds());
+        float[] point = {150, 25};
+        shifted.contentForward().mapPoints(point);
+        assertArrayEquals(new float[]{150, 57}, point, .001f);
+        shifted.inverse().mapPoints(point);
+        assertArrayEquals(new float[]{150, 25}, point, .001f);
+    }
 }

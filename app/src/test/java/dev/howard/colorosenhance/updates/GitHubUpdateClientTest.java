@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.cert.Certificate;
 import java.util.Map;
 import javax.net.ssl.HttpsURLConnection;
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.junit.Test;
@@ -66,12 +67,59 @@ public class GitHubUpdateClientTest {
     }
     @Test public void checksOnceWithTimeoutsNoRedirectsNoTokenAndClosesConnection() throws Exception {
         Fake connection=new Fake(200,release());
-        var result=new GitHubUpdateClient(()->connection).check();
+        var result=new GitHubUpdateClient(url -> {
+            assertEquals(ReleaseInfo.API_URL, url);
+            return connection;
+        }).check(false);
         assertTrue(result.successful());assertNull(result.error());assertTrue(connection.disconnected);assertTrue(connection.closed);
         assertEquals(7000,connection.getConnectTimeout());assertEquals(10000,connection.getReadTimeout());
         assertFalse(connection.getInstanceFollowRedirects());assertFalse(connection.getUseCaches());
         assertNull(connection.getRequestProperty("Authorization"));assertFalse(connection.getDoOutput());
         assertEquals("application/vnd.github.full+json", connection.getRequestProperty("Accept"));
+    }
+    @Test public void optInChoosesNewestInstallablePreviewAndSkipsDraftsAndMissingApks() throws Exception {
+        JSONObject missingApk = release("74", "1.34.0", true).put("assets", new JSONArray());
+        JSONObject draft = release("73", "1.33.0", true).put("draft", true);
+        JSONArray releases = new JSONArray().put(missingApk).put(draft)
+                .put(release("71", "1.32.0", true)).put(new JSONObject(release()))
+                .put(release("72", "1.32.1", true));
+        Fake connection = new Fake(200, releases.toString());
+        var result = new GitHubUpdateClient(url -> {
+            assertEquals(ReleaseInfo.RELEASES_API_URL + "?per_page=10", url);
+            return connection;
+        }).check(true);
+        assertTrue(connection.disconnected);
+        assertTrue(result.successful());
+        assertEquals(72, result.release().versionCode());
+        assertTrue(result.release().prerelease());
+    }
+    @Test public void supportedPreviewCanBePromotedInPlaceAndNewerOrEqualStableTakesPriority() throws Exception {
+        JSONObject preview = release("72", "1.32.1", true);
+        assertTrue(ReleaseInfo.latestListed(new JSONArray().put(preview).toString()).prerelease());
+        for (String stableCode : new String[]{"72", "73"}) {
+            JSONObject stable = release(stableCode, "1.32.2", false);
+            assertEquals(ReleaseInfo.parse(stable.toString()),
+                    ReleaseInfo.latestListed(new JSONArray().put(preview).put(stable).toString()));
+        }
+        preview.put("prerelease", false);
+        ReleaseInfo promoted = ReleaseInfo.parse(preview.toString());
+        assertFalse(promoted.prerelease());
+        assertFalse(promoted.newerThan(72));
+        assertEquals(promoted, ReleaseInfo.latestListed(new JSONArray().put(preview).toString()));
+    }
+    @Test public void fallsBackToOfficialEndpointWhenListContainsNoInstallableRelease() throws Exception {
+        Fake empty = new Fake(200, "[]");
+        Fake stable = new Fake(200, release());
+        var result = new GitHubUpdateClient(url -> ReleaseInfo.API_URL.equals(url) ? stable : empty).check(true);
+        assertTrue(empty.disconnected);
+        assertTrue(stable.disconnected);
+        assertTrue(result.successful());
+        assertFalse(result.release().prerelease());
+    }
+    private static JSONObject release(String code, String name, boolean prerelease) throws JSONException {
+        return new JSONObject(release().replace("70-1.31.0", code + "-" + name)
+                .replace("coloros-enhance-1.31.0.apk", "coloros-enhance-" + name + ".apk"))
+                .put("prerelease", prerelease);
     }
     @Test public void keepsRenderedNotesAndFallsBackWithoutTruncatingHtmlTags() throws Exception {
         JSONObject response = new JSONObject(release()).put("body", "### 版本说明")
@@ -91,22 +139,22 @@ public class GitHubUpdateClientTest {
         for(int status:new int[]{404,429,503,302,403}) {
             Fake connection=new Fake(status,"");
             if(status==403)connection.headers=Map.of("X-RateLimit-Remaining","0");
-            var result=new GitHubUpdateClient(()->connection).check();
+            var result=new GitHubUpdateClient(url->connection).check(false);
             assertFalse(result.successful());assertTrue(connection.disconnected);
             if(status==429 || status==403)assertTrue(result.error().contains("频繁"));
             if(status==404)assertTrue(result.error().contains("正式版本"));
         }
         Fake invalid=new Fake(200,"not json");
-        assertTrue(new GitHubUpdateClient(()->invalid).check().error().contains("格式"));
+        assertTrue(new GitHubUpdateClient(url->invalid).check(false).error().contains("格式"));
         assertTrue(invalid.disconnected);assertTrue(invalid.closed);
     }
     @Test public void handlesTimeoutAndBoundsBothDeclaredAndStreamingResponseSize() throws Exception {
-        assertTrue(new GitHubUpdateClient(()->{throw new SocketTimeoutException();}).check().error().contains("超时"));
-        assertFalse(new GitHubUpdateClient(()->{throw new IOException();}).check().successful());
+        assertTrue(new GitHubUpdateClient(url->{throw new SocketTimeoutException();}).check(false).error().contains("超时"));
+        assertFalse(new GitHubUpdateClient(url->{throw new IOException();}).check(false).successful());
         for(boolean declared:new boolean[]{false,true}) {
             Fake connection=new Fake(200,"a".repeat(512*1024+1));
             connection.declared=declared?512*1024+1:-1;
-            assertTrue(new GitHubUpdateClient(()->connection).check().error().contains("格式"));
+            assertTrue(new GitHubUpdateClient(url->connection).check(false).error().contains("格式"));
             assertTrue(connection.disconnected);if(!declared)assertTrue(connection.closed);
         }
     }

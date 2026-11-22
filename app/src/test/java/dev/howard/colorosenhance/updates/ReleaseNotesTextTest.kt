@@ -15,7 +15,7 @@ import org.robolectric.annotation.Config
 class ReleaseNotesTextTest {
     private val page = ReleaseInfo.MODULE_URL + "/releases/tag/73-1.32.1"
     private fun release(html: String, plain: String = "### 原始说明") =
-        ReleaseInfo(73, "1.32.1", plain, html, page, "https://github.com/download.apk")
+        ReleaseInfo(73, "1.32.1", plain, html, page, "https://github.com/download.apk", false)
 
     @Test fun displaysHeadingsListsEmphasisAndInlineCodeAsStyledText() {
         val result = formatReleaseNotes(release("""

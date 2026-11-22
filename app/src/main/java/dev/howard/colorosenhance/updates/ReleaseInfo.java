@@ -6,12 +6,14 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-/** Accept only the public module repository's stable release and its matching APK. */
-public record ReleaseInfo(long versionCode, String versionName, String notes, String notesHtml, String pageUrl, String apkUrl) {
+/** Accept only published releases of the public module repository with a matching APK. */
+public record ReleaseInfo(long versionCode, String versionName, String notes, String notesHtml, String pageUrl,
+                          String apkUrl, boolean prerelease) {
     public static final String SOURCE_URL = "https://github.com/Howard-Tse/ColorOS-Enhance";
     public static final String MODULE_URL = "https://github.com/Xposed-Modules-Repo/io.github.howard_tse.colorosenhance";
     public static final String RELEASES_URL = MODULE_URL + "/releases";
-    public static final String API_URL = "https://api.github.com/repos/Xposed-Modules-Repo/io.github.howard_tse.colorosenhance/releases/latest";
+    public static final String RELEASES_API_URL = "https://api.github.com/repos/Xposed-Modules-Repo/io.github.howard_tse.colorosenhance/releases";
+    public static final String API_URL = RELEASES_API_URL + "/latest";
     private static final String PATH = "/Xposed-Modules-Repo/io.github.howard_tse.colorosenhance/releases/";
     private static final Pattern TAG = Pattern.compile("([1-9][0-9]{0,9})-([0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?)");
 
@@ -19,9 +21,30 @@ public record ReleaseInfo(long versionCode, String versionName, String notes, St
     public boolean hasNotes() { return !notes.isBlank() || !notesHtml.isBlank(); }
 
     public static ReleaseInfo parse(String json) throws JSONException {
-        JSONObject release = new JSONObject(json);
-        if (release.getBoolean("draft") || release.getBoolean("prerelease"))
-            throw new JSONException("Not a stable release");
+        return parse(new JSONObject(json), false);
+    }
+
+    static ReleaseInfo latestListed(String json) throws JSONException {
+        JSONArray releases = new JSONArray(json);
+        ReleaseInfo latest = null;
+        for (int i = 0; i < releases.length(); i++) {
+            try {
+                ReleaseInfo candidate = parse(releases.getJSONObject(i), true);
+                if (latest == null || candidate.newerThan(latest.versionCode())
+                        || candidate.versionCode() == latest.versionCode() && latest.prerelease() && !candidate.prerelease()) {
+                    latest = candidate;
+                }
+            } catch (JSONException unavailable) {
+                // A draft or a release whose APK is unavailable must not hide valid updates.
+            }
+        }
+        return latest;
+    }
+
+    private static ReleaseInfo parse(JSONObject release, boolean includePrereleases) throws JSONException {
+        boolean prerelease = release.getBoolean("prerelease");
+        if (release.getBoolean("draft") || prerelease && !includePrereleases)
+            throw new JSONException("Release is outside the selected channel");
         String tag = release.getString("tag_name");
         var match = TAG.matcher(tag);
         if (!match.matches() || tag.length() > 100) throw new JSONException("Invalid version tag");
@@ -45,7 +68,7 @@ public record ReleaseInfo(long versionCode, String versionName, String notes, St
         String html = release.isNull("body_html") ? "" : release.optString("body_html", "");
         if (notes.length() > 20_000) notes = notes.substring(0, 20_000) + "\n…完整说明请查看发布页。";
         if (html.length() > 80_000) html = ""; // Keep complete tags or display the limited plain-text fallback.
-        return new ReleaseInfo(code, name, notes, html, page, apk);
+        return new ReleaseInfo(code, name, notes, html, page, apk, prerelease);
     }
 
     String notesLink(String target) {

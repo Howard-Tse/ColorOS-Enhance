@@ -6,6 +6,7 @@ import android.content.SharedPreferences;
 import com.howard.simpinautounlock.ModuleApplication;
 import com.google.android.material.color.DynamicColors;
 import dev.howard.aodenhance.SystemUiRestarter;
+import dev.howard.colorosenhance.updates.GitHubUpdateClient;
 import io.github.libxposed.service.XposedService;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -14,12 +15,13 @@ import java.util.Map;
 import java.util.Set;
 
 public final class EnhanceApplication extends ModuleApplication {
+    private static final String PREFER_PRERELEASES = "prefer_prereleases";
     private final Handler main = new Handler(Looper.getMainLooper());
     private final CopyOnWriteArrayList<Runnable> observers = new CopyOnWriteArrayList<>();
     private final dev.howard.colorosenhance.updates.LaunchUpdateCheck launchUpdates =
             new dev.howard.colorosenhance.updates.LaunchUpdateCheck(
                     task->new Thread(task,"coloros-update-check").start(),main::post,
-                    ()->new dev.howard.colorosenhance.updates.GitHubUpdateClient().check(),BuildConfig.VERSION_CODE,this::notifyViews);
+                    this::prefersPrereleases,new GitHubUpdateClient()::check,BuildConfig.VERSION_CODE,this::notifyViews);
     private final dev.howard.colorosenhance.migration.MigrationController migration = new dev.howard.colorosenhance.migration.MigrationController(this);
     private final SettingsCoordinator settings = new SettingsCoordinator(this::settingsSource,this::notifyViews,
             ()->dev.howard.colorosenhance.icons.StatusIconCatalog.usesColorOsRingerSlot(dev.howard.colorosenhance.icons.StatusIconCatalog.slots(this)));
@@ -36,6 +38,12 @@ public final class EnhanceApplication extends ModuleApplication {
     @Override protected void onFrameworkServiceChanged(XposedService service) { settings.refresh(); notifyViews(); migration.frameworkChanged(); }
     public dev.howard.colorosenhance.migration.MigrationController migration(){return migration;}
     public dev.howard.colorosenhance.updates.LaunchUpdateCheck launchUpdates(){return launchUpdates;}
+    public boolean prefersPrereleases() { return updatePreferences().getBoolean(PREFER_PRERELEASES, false); }
+    public void setPreferPrereleases(boolean prefer) {
+        updatePreferences().edit().putBoolean(PREFER_PRERELEASES, prefer).apply();
+        launchUpdates.dismiss();
+    }
+    private SharedPreferences updatePreferences() { return getSharedPreferences("app_updates", MODE_PRIVATE); }
     public void migrationChanged(){settings.refresh();notifyViews();}
     public void observe(Runnable observer) { observers.addIfAbsent(observer); }
     public void removeObserver(Runnable observer) { observers.remove(observer); }

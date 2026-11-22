@@ -50,12 +50,32 @@ public class LaunchUpdateCheckTest {
     }
     @Test public void unexpectedFailureAndRejectedWorkerStaySilent() {
         Queue worker=new Queue(),main=new Queue();
-        LaunchUpdateCheck check=new LaunchUpdateCheck(worker,main,()->{throw new IllegalStateException();},69,()->fail("No error popup"));
+        LaunchUpdateCheck check=new LaunchUpdateCheck(worker,main,()->false,preview->{throw new IllegalStateException();},69,()->fail("No error popup"));
         check.foreground();check.check();worker.run();main.run();assertNull(check.pending());
-        check=new LaunchUpdateCheck(task->{throw new java.util.concurrent.RejectedExecutionException();},main,()->null,69,()->fail("No error popup"));
+        check=new LaunchUpdateCheck(task->{throw new java.util.concurrent.RejectedExecutionException();},main,()->false,preview->null,69,()->fail("No error popup"));
         check.foreground();check.check();assertNull(check.pending());
     }
-    static ReleaseInfo release(long code) { return new ReleaseInfo(code,"1.31.0","Notes","",ReleaseInfo.RELEASES_URL,""); }
+    @Test public void aPreviewPromptRespectsOptInEvenIfItFinishesAfterOptOut() {
+        Fixture f = new Fixture();
+        var preview = new ReleaseInfo(71, "1.31.1", "Notes", "", ReleaseInfo.RELEASES_URL, "", true);
+        f.result = new GitHubUpdateClient.Result(preview, null);
+        f.includePrereleases = true;
+        f.checks.foreground();
+        f.checks.check();
+        f.worker.run();
+        assertTrue(f.checkedWithPrereleases);
+        f.includePrereleases = false;
+        f.main.run();
+        assertNull(f.checks.pending());
+
+        f.checks.background();
+        f.includePrereleases = true;
+        f.checks.foreground();
+        f.checks.check();
+        f.complete();
+        assertEquals(preview, f.checks.pending());
+    }
+    static ReleaseInfo release(long code) { return new ReleaseInfo(code,"1.31.0","Notes","",ReleaseInfo.RELEASES_URL,"",false); }
     static class Queue extends ArrayDeque<Runnable> implements Executor {
         public void execute(Runnable task){add(task);}
         void run(){remove().run();}
@@ -65,7 +85,10 @@ public class LaunchUpdateCheckTest {
         final ReleaseInfo release=release(70);
         GitHubUpdateClient.Result result=new GitHubUpdateClient.Result(release,null);
         int requests,notifications;
-        final LaunchUpdateCheck checks=new LaunchUpdateCheck(worker,main,()->{requests++;return result;},69,()->notifications++);
+        boolean includePrereleases, checkedWithPrereleases;
+        final LaunchUpdateCheck checks=new LaunchUpdateCheck(worker,main,()->includePrereleases,preview->{
+            requests++;checkedWithPrereleases=preview;return result;
+        },69,()->notifications++);
         void complete(){worker.run();main.run();}
     }
 }

@@ -52,11 +52,14 @@ public class NativeSettingsPageTest {
 
         var first = (PreferenceGroup) f.host.screen.getPreference(0);
         assertEquals("coloros.pages", first.getKey());
-        assertEquals(4, first.getPreferenceCount());
+        assertEquals(5, first.getPreferenceCount());
         assertEquals("unbind_status_bar", first.getPreference(0).getKey());
-        assertEquals("landscape_follow_portrait", first.getPreference(1).getKey());
-        assertEquals("open_cloud_portrait", first.getPreference(2).getKey());
-        assertEquals("open_cloud_landscape", first.getPreference(3).getKey());
+        assertEquals("capsule_lock_exit", first.getPreference(1).getKey());
+        assertEquals("landscape_follow_portrait", first.getPreference(2).getKey());
+        assertEquals("open_cloud_portrait", first.getPreference(3).getKey());
+        assertEquals("open_cloud_landscape", first.getPreference(4).getKey());
+        assertTrue(f.switchAt("capsule_lock_exit").isEnabled());
+        assertFalse(f.switchAt("capsule_lock_exit").isChecked());
         String hint = first.getPreference(0).getSummary().toString();
         assertTrue(hint.contains("重启系统界面"));
         assertTrue(hint.contains("未配置的场景仍跟随系统"));

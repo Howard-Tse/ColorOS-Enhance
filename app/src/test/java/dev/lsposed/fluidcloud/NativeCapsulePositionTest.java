@@ -114,6 +114,34 @@ public class NativeCapsulePositionTest {
         assertFrame(container, 55, -8);
     }
 
+    @Test public void portraitDownwardOffsetContinuesAfterReachingTheNativeBarEdge() throws Exception {
+        RuntimeEnvironment.setQualifiers("+port");
+        var position = createPosition();
+        var host = newHost(position);
+        var container = (Container) host.getChildAt(0);
+        var portrait = new CapsulePosition(0, 30);
+        var landscape = new CapsulePosition(0, 32);
+
+        position.refresh(portrait, landscape);
+        assertEquals(18, container.getTop());
+        assertEquals(12, position.overflowY(host));
+        position.refresh(new CapsulePosition(0, 32), landscape);
+        assertEquals(18, container.getTop());
+        assertEquals(14, position.overflowY(host));
+
+        RuntimeEnvironment.setQualifiers("+land");
+        layout(host, 480);
+        assertEquals(18, container.getTop());
+        assertEquals(0, position.overflowY(host));
+
+        RuntimeEnvironment.setQualifiers("+port");
+        layout(host);
+        assertEquals(14, position.overflowY(host));
+        position.close();
+        assertEquals(0, container.getTop());
+        assertEquals(0, position.overflowY(host));
+    }
+
     private static NativeCapsulePosition createPosition() throws ReflectiveOperationException {
         return new NativeCapsulePosition(name -> switch (name.substring(name.lastIndexOf('.') + 1)) {
             case "CapsuleContainerRoot" -> FrameLayout.class;

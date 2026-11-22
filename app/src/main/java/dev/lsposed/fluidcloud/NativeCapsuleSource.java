@@ -291,6 +291,7 @@ final class NativeCapsuleSource {
     }
     private static boolean running(Drawable drawable){return drawable instanceof Animatable animation && animation.isRunning();}
     Rect touchBounds() { return touchable.getBounds(); }
+    boolean hasVisibleCapsules() { return !capsules.isEmpty(); }
     @android.annotation.SuppressLint("DiscouragedApi")
     CapsulePresentationGeometry.Profile profile(View window,RectF fallback){
         if(capsules.isEmpty())return fallbackProfile(fallback);
@@ -427,11 +428,12 @@ final class NativeCapsuleSource {
             drawable.setBounds(Math.round(bounds.left),Math.round(bounds.top),Math.round(bounds.right),Math.round(bounds.bottom));drawable.draw(canvas);
         }
     }
-    int viewportHeight(View window, int screenHeight) {
+    int viewportHeight(View window, int screenHeight, int extraBottom) {
         if (host.getWidth() <= 0 || host.getHeight() <= 0 || !host.isAttachedToWindow()) return Math.max(1, screenHeight);
         RectF bounds = new RectF(0, 0, host.getWidth(), host.getHeight());
         captureWindowOffset(window);
         matrixInWindow(host, window).mapRect(bounds);
+        bounds.bottom += extraBottom;
         int quantum = Math.max(1, Math.round(host.getResources().getDisplayMetrics().density * 16));
         return viewportHeight(bounds, screenHeight, quantum);
     }
