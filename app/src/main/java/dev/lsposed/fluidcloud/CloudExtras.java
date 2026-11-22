@@ -141,8 +141,26 @@ final class CloudExtras {
                 }));
                 module.info("Native capsule size controls installed");
             }catch(ReflectiveOperationException|RuntimeException|LinkageError error){rollback(start);size=null;module.error("Capsule sizing unavailable; native bounds retained",error);}
-            try { position = new NativeCapsulePosition(lookup); }
-            catch (ClassNotFoundException | RuntimeException | LinkageError unavailable) {
+            start=hooks.size();
+            try {
+                position = new NativeCapsulePosition(lookup);
+                hooks.add(module.hook(position.layout).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                        .intercept(chain -> {
+                            Object result = chain.proceed();
+                            if (!closing) safe(() -> position.afterLayout((ViewGroup) chain.getThisObject()));
+                            return result;
+                        }));
+                if (position.hidden != null) {
+                    hooks.add(module.hook(position.hidden).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                            .intercept(chain -> {
+                                Object result = chain.proceed();
+                                if (!closing) safe(() -> position.afterVisibility((View) chain.getThisObject()));
+                                return result;
+                            }));
+                }
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+                rollback(start);
+                position = null;
                 module.error("Capsule position controls unavailable; native placement retained", unavailable);
             }
             start=hooks.size();
@@ -244,7 +262,10 @@ final class CloudExtras {
             if(foreground!=null)safe(foreground::refresh);
             if(dismissal!=null)safe(dismissal::refresh);
             if(size!=null)for(View root:new ArrayList<>(roots))safe(()->size.refresh(root,closing?CapsuleSize.OEM:module.config.capsuleSize()));
-            if(position!=null)for(View root:new ArrayList<>(roots))safe(()->position.refresh(root,module.config.capsulePosition()));
+            if(position!=null)safe(()->{
+                CloudConfig config=module.config;
+                position.refresh(config.capsulePosition(false),config.capsulePosition(true));
+            });
             if(order!=null){safe(()->order.selection(root));order.schedule();}
             if(appearance!=null)safe(()->appearance.restoreDisabled(!closing&&module.config.hideCapsuleStroke(),!closing&&module.config.hideCapsuleArrows()));
             if(appearance!=null)for(View root:new ArrayList<>(roots))safe(()->appearance.refresh(root,

@@ -424,6 +424,48 @@ public class NativeCameraCardTest {
         assertEquals("An unattached, unsized native window must wait for its normal layout",0,view.getMeasuredHeight());
         instant.restore();cards.restore();
     }
+    @Test public void instantCornerSizingCountsCameraPaddingExactlyOnce() throws Exception {
+        var context = Robolectric.buildActivity(Activity.class).setup().get();
+        var root = new Root(context);
+        root.h.set(460, 25, 540, 115);
+        var container = new Instant(context);
+        root.addView(container);
+        var outer = new FrameLayout(context);
+        var template = new FrameLayout(context);
+        outer.addView(template, new FrameLayout.LayoutParams(-1, 84));
+        var params = new FrameLayout.LayoutParams(300, -2);
+        params.topMargin = 53;
+        container.addView(outer, params);
+        container.current = outer;
+        container.expanded = true;
+        var cards = new NativeCameraCard(lookup(false), (c, y) -> new NativeCameraCard.Plan(25, Math.round(y - 25)));
+        var instant = new NativeInstantCameraCard(lookup(false), cards);
+        int width = View.MeasureSpec.makeMeasureSpec(300, View.MeasureSpec.EXACTLY);
+        int height = View.MeasureSpec.makeMeasureSpec(240, View.MeasureSpec.AT_MOST);
+
+        outer.measure(width, height);
+        assertEquals(84, outer.getMeasuredHeight());
+        assertEquals(128, CloudCorners.compactCardHeight(84, 300, height, 64,
+                cards.cameraInsetOutsideMeasure(template, container)));
+
+        instant.update(container, true);
+        outer.measure(width, height);
+        assertEquals(28, outer.getPaddingTop());
+        assertEquals(112, outer.getMeasuredHeight());
+        int nestedInset = cards.cameraInsetOutsideMeasure(template, container);
+        assertEquals(28, nestedInset);
+        assertEquals(128, nestedInset + CloudCorners.compactCardHeight(84, 300, height, 64, nestedInset));
+        assertEquals(112, nestedInset + CloudCorners.compactCardHeight(84, 300, height, 50, nestedInset));
+        assertEquals(0, cards.cameraInsetOutsideMeasure(outer, container));
+        assertEquals(128, CloudCorners.compactCardHeight(outer.getMeasuredHeight(), 300, height, 64,
+                cards.cameraInsetOutsideMeasure(outer, container)));
+
+        instant.update(container, false);
+        outer.measure(width, height);
+        assertEquals(84, outer.getMeasuredHeight());
+        assertEquals(0, cards.cameraInsetOutsideMeasure(template, container));
+    }
+
     @Test public void instantPaintLayersRecoverFromLayoutOnlyPaddingOffsetsWithoutMovingContent() throws Exception {
         for(boolean old:new boolean[]{false,true}) {
             var context=Robolectric.buildActivity(Activity.class).setup().get();
@@ -664,6 +706,89 @@ public class NativeCameraCardTest {
         assertNull(NativeCameraCard.morph(new Rect(),new Rect(598,31,672,136),1,1,321,3,28,1160,642));
         assertNull(NativeCameraCard.morph(new Rect(0,0,100,100),new Rect(598,31,672,136),0,0,321,3,28,1160,642));
     }
+    @Test @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    public void sharedPageStrokeUsesCameraBoundsAndKeepsItsNativeColorUpdates() throws Exception {
+        var context = Robolectric.buildActivity(Activity.class).setup().get();
+        var list = new Container(context);
+        var card = new Card(context);
+        var body = new FrameLayout(context);
+        body.setBackgroundColor(Color.BLACK);
+        var page = new android.widget.LinearLayout(context);
+        page.addView(new View(context), new android.widget.LinearLayout.LayoutParams(10, 10));
+        body.addView(page, new FrameLayout.LayoutParams(-1, -1));
+        card.i = body;
+        card.addView(body, new FrameLayout.LayoutParams(-1, 350));
+        list.addView(card);
+        var stroke = new GradientDrawable();
+        stroke.setColor(Color.TRANSPARENT);
+        stroke.setStroke(8, Color.RED);
+        stroke.setCornerRadius(70);
+        page.setForeground(stroke);
+
+        var contract = contract(false);
+        contract.registerSharedStroke(page);
+        list.setTranslationY(200);
+        contract.afterNativeLayout(list, true);
+        card.measure(View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        card.layout(0, 14, 1000, 14 + card.getMeasuredHeight());
+        contract.beforeDraw(card, true);
+
+        int inset = margin(body);
+        assertTrue(inset > 20);
+        var image = Bitmap.createBitmap(card.getWidth(), card.getHeight(), Bitmap.Config.ARGB_8888);
+        card.draw(new Canvas(image));
+        assertEquals(Color.RED, image.getPixel(500, 3));
+        assertEquals(Color.BLACK, image.getPixel(500, inset + 3));
+        assertEquals(Color.BLACK, image.getPixel(15, 3)); // Still uses the native drawable's radius.
+
+        contract.exposeSharedStroke(page);
+        assertSame(stroke, page.getForeground());
+        stroke.setStroke(8, Color.GREEN);
+        contract.beforeDraw(card, true);
+        card.draw(new Canvas(image));
+        assertEquals(Color.GREEN, image.getPixel(500, 3));
+        assertEquals(Color.BLACK, image.getPixel(500, inset + 3));
+
+        contract.afterLayout(card, false);
+        assertSame(stroke, page.getForeground());
+        assertSame(page, stroke.getCallback());
+    }
+
+    @Test @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    public void resizingTemplatesDrawBothMaterialLayersAtTheAnimatedHeight() throws Exception {
+        var context = Robolectric.buildActivity(Activity.class).setup().get();
+        var card = new Card(context);
+        var body = new FrameLayout(context);
+        var outgoing = new PageBackground(context);
+        var incoming = new PageBackground(context);
+        var oldStroke = new GradientDrawable();
+        oldStroke.setColor(Color.TRANSPARENT);
+        oldStroke.setStroke(8, Color.RED);
+        outgoing.setBackground(oldStroke);
+        incoming.setBackgroundColor(0x500000ff);
+        incoming.setAlpha(.5f);
+        body.addView(outgoing, new FrameLayout.LayoutParams(-1, 160));
+        body.addView(incoming, new FrameLayout.LayoutParams(-1, 290));
+        card.addView(body, new FrameLayout.LayoutParams(-1, 290));
+        card.i = body;
+        card.measure(View.MeasureSpec.makeMeasureSpec(500, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        card.layout(0, 0, 500, 290);
+
+        var contract = contract(false);
+        assertTrue(contract.sharedTemplateTransition(card));
+        contract.resizeSharedMaterials(card, 240);
+        var surface = (CameraMaterialSurface) card.getChildAt(0);
+        var image = Bitmap.createBitmap(500, 290, Bitmap.Config.ARGB_8888);
+        surface.draw(new Canvas(image));
+        assertEquals(0, Color.red(image.getPixel(250, 156)));
+        assertTrue(Color.red(image.getPixel(250, 236)) > 150);
+        assertEquals(160, outgoing.getHeight());
+        contract.finishSharedMaterialResize(card);
+        assertSame(oldStroke, outgoing.getBackground());
+    }
+
     @Test @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
     public void regularCardContourIsClippedDuringCollapseAndReturnsOnReopen() throws Exception {
         var context = Robolectric.buildActivity(Activity.class).setup().get();
@@ -909,6 +1034,7 @@ public class NativeCameraCardTest {
                 old?"i5.d":NativeCameraCard.VIEWS+"e",Root.class,
                 old?"l5.h":"com.oplus.systemui.plugins.seedling.card.window.i",Window.class,
                 "com.oplus.systemui.plugins.shared.template.component.media.view.MediaBackGroundView",MediaBackground.class,
+                "com.oplus.systemui.plugins.shared.template.page.view.PageBackgroundView",PageBackground.class,
                 NativeCameraCard.VIEWS+"CardBackgroundView",BlurBackground.class,
                 old?"j6.h":"com.oplus.systemui.plugins.common.util.j",OutlineProvider.class);
         return name->{
@@ -963,6 +1089,7 @@ public class NativeCameraCardTest {
         @Override public void onDetachedFromWindow(){super.onDetachedFromWindow();}
     }
     public static class MediaBackground extends View { public MediaBackground(Context c){super(c);} }
+    public static class PageBackground extends FrameLayout { public PageBackground(Context c){super(c);} }
     public static class CustomDrawnFrame extends FrameLayout {
         public CustomDrawnFrame(Context c){super(c);}
         @Override protected void onDraw(android.graphics.Canvas canvas){super.onDraw(canvas);}

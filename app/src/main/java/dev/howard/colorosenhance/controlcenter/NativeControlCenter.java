@@ -3,6 +3,7 @@ package dev.howard.colorosenhance.controlcenter;
 import android.graphics.Canvas;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -18,7 +19,7 @@ final class NativeControlCenter {
     final Method attach,detach,enterEdit,exitEdit,dispatch,intercept,touch,draw,subSize,panelExpanded;
     final Method manager,layoutConfig,locations,setLocations,refreshPages,scrollPage,pageIndex,pageCount;
     final Method adapter,data,size,colSpan,rowSpan,locPage,locColumn,locRow,gridNum,fullyExpanded,resetTouch,animationRowsChanged;
-    final Method scrollOffset;
+    final Method scrollOffset,drawPageTile;
     final Method tileIntercept,tileTouch,tileStopScroll,pagingArea;
     final Constructor<?> loc;
     final Field componentView,panel,tiles,leftTiles,indicator,bottomArea,editing,adding,closing,rows,columns,cellHeight,pullManager,tileComponent;
@@ -74,6 +75,10 @@ final class NativeControlCenter {
         pageIndex=method(layoutType,"getCurrentPageIndex");pageCount=method(layoutType,"getPageCount");
         Method offset=null;try{offset=method(layoutType,"currScrollOffset");}catch(NoSuchMethodException unavailable){}
         scrollOffset=offset;
+        Method drawChild=null;
+        try{drawChild=method(ViewGroup.class,"drawChild",Canvas.class,View.class,long.class);}
+        catch(NoSuchMethodException | RuntimeException unavailable){}
+        drawPageTile=drawChild;
         size=method(gridData,"getSize");colSpan=method(span,"getColSpan");rowSpan=method(span,"getRowSpan");
         locPage=method(location,"getPageIndex");locColumn=method(location,"getStartCol");locRow=method(location,"getStartRow");
         loc=location.getConstructor(int.class,int.class,int.class);

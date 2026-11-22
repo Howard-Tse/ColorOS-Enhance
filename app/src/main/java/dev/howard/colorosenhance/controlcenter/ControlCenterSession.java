@@ -1,7 +1,6 @@
 package dev.howard.colorosenhance.controlcenter;
 
 import android.content.res.Configuration;
-import android.graphics.Canvas;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -36,13 +35,14 @@ final class ControlCenterSession {
     private boolean iconMotionFailed;
     private boolean queued,closed,suspended,faulted,eligibleGesture;
     boolean applying;
-    private final ControlCenterPageFade pageFade=new ControlCenterPageFade();
+    private final ControlCenterPageFade pageFade;
     private List<?> lastSource=List.of();
     private Object[] lastItems={};
     private int lastRows,lastColumns,lastCell,lastWidth,lastHeight;
 
     ControlCenterSession(NativeControlCenter api,Object component,Supplier<ControlCenterConfig> config,Consumer<Throwable> failed,Consumer<String> report) {
         this.api=api;this.component=component;this.config=config;this.failed=failed;this.report=report;
+        pageFade=new ControlCenterPageFade((pager,canvas,tile)->call(api.drawPageTile,pager,canvas,tile,pager.getDrawingTime()),failed);
         root=(FrameLayout)get(api.componentView,component);panel=(ViewGroup)get(api.panel,component);
         tiles=(ViewGroup)get(api.tiles,component);leftTiles=(View)get(api.leftTiles,component);indicator=(View)get(api.indicator,component);
         panelHeight=new ControlCenterPanel(panel);
@@ -158,7 +158,8 @@ final class ControlCenterSession {
         eligibleGesture=false;
     }
     private void updateFades(){
-        if(closed || faulted || !config.get().fade(wide()) || editing() || api.scrollOffset==null){pageFade.close();return;}
+        if(closed || faulted || !config.get().fade(wide()) || editing()
+                || api.scrollOffset==null || api.drawPageTile==null){pageFade.close();return;}
         List<ControlCenterPageFade.Target> targets=new ArrayList<>();
         for(View candidate:new View[]{tiles,leftTiles})if(candidate instanceof ViewGroup group){
             Object manager=call(api.manager,group);
@@ -167,8 +168,7 @@ final class ControlCenterSession {
         pageFade.sync(targets);
     }
     boolean fade(View view){return !closed && !faulted && config.get().fade(wide()) && !editing() && pageFade.contains(view);}
-    int beginFade(View view,Canvas canvas){return pageFade.begin(view,canvas);}
-    void endFade(View view,Canvas canvas,int save){pageFade.end(view,canvas,save);}
+    void pagerDrawn(View view){pageFade.pagerDrawn(view);}
     private void restore(){
         eligibleGesture=false;
         if(scroller==null)return;

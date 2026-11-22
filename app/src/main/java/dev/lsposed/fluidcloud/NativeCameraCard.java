@@ -3,6 +3,7 @@ package dev.lsposed.fluidcloud;
 import android.app.KeyguardManager;
 import android.content.res.Configuration;
 import android.graphics.Rect;
+import android.graphics.drawable.GradientDrawable;
 import android.view.Display;
 import android.view.DisplayCutout;
 import android.view.View;
@@ -38,6 +39,8 @@ final class NativeCameraCard {
     private final WeakHashMap<View, Integer> stablePositions = new WeakHashMap<>();
     private final WeakHashMap<View, Rect> morphMasks = new WeakHashMap<>();
     private final WeakHashMap<View, Decorations> decorations = new WeakHashMap<>();
+    private final WeakHashMap<View, Integer> resizeMaterialHeights = new WeakHashMap<>();
+    private final java.util.Set<View> sharedStrokeHosts = java.util.Collections.newSetFromMap(new WeakHashMap<>());
     private final WeakHashMap<View, java.lang.ref.WeakReference<CameraHeaderSurface>> headers = new WeakHashMap<>();
     private final WeakHashMap<View, java.lang.ref.WeakReference<CameraMaterialSurface>> materialSurfaces = new WeakHashMap<>();
     private final WeakHashMap<View, java.lang.ref.WeakReference<CameraCardForeground>> foregrounds = new WeakHashMap<>();
@@ -200,7 +203,11 @@ final class NativeCameraCard {
             int before = body != null && body.getLayoutParams() instanceof FrameLayout.LayoutParams p ? p.topMargin : 0;
             int inset = itemPosition(container, card) == 0 ? position.inset() : 0;
             adjustContent(card, inset);
-            if (inset == 0) { morphMasks.remove(card); restoreSurface(card); restoreBackgrounds(card); }
+            if (inset == 0) {
+                morphMasks.remove(card);
+                restoreSurface(card);
+                if (!resizeMaterialHeights.containsKey(card)) restoreBackgrounds(card);
+            }
             else {
                 // Child-only invalidations can reuse CardView's display list,
                 // bypassing its dispatchDraw. Reconcile before any RenderNode is
@@ -246,6 +253,20 @@ final class NativeCameraCard {
         if (body == null || margin == null || !(body.getLayoutParams() instanceof FrameLayout.LayoutParams params)
                 || params.topMargin != margin.appliedTop()) return 0;
         return margin.appliedTop() - margin.nativeTop();
+    }
+    int cameraInsetOutsideMeasure(View measured, View owner) {
+        if (cardType.isInstance(owner)) return cameraContentInset(owner);
+        if (external.isEmpty()) return 0;
+        // InstantContainer may wrap the measured SDK layout in a padded root.
+        // If the measured layout itself owns the padding, its native measurement
+        // has already included it. Only count padding on an ancestor here.
+        for (View node = measured; node != owner && node.getParent() instanceof View parent; node = parent) {
+            if (parent == owner) {
+                External instant = external.get(node);
+                return instant == null || node == measured ? 0 : instant.inset();
+            }
+        }
+        return 0;
     }
     private int itemPosition(Object container, View card) {
         int index = (int) Reflect.call(adapterPosition, container, card);
@@ -485,11 +506,15 @@ final class NativeCameraCard {
         int inset = enabled && position != null && itemPosition(parent, card) == 0
                 ? position.inset() : 0;
         View child = (View) Reflect.get(content, card);
-        if (inset <= 0) { restoreBackgrounds(card); removeHeader(card); return; }
+        if (inset <= 0) {
+            if (!resizeMaterialHeights.containsKey(card)) restoreBackgrounds(card);
+            removeHeader(card);
+            return;
+        }
         ArrayList<View> layers = new ArrayList<>();findDecorativeBackgrounds(child, child, layers);
         for (View background : layers) {
             extendBackground(card, background, inset);
-            decorateLayer(background, card, 0);
+            decorateLayer(background, card, 0, true);
         }
         extendContainerDecorations(child, child, card, inset);
         syncMaterials((ViewGroup) card, child);
@@ -514,7 +539,7 @@ final class NativeCameraCard {
             findDecorativeBackgrounds(body, body, layers);
             extendContainerDecorations(body, body, card, inset);
         }
-        for (View background : layers) { extendBackground(card, background, inset); decorateLayer(background, card, 0); }
+        for (View background : layers) { extendBackground(card, background, inset); decorateLayer(background, card, 0, true); }
         syncMaterials(card, null);
         syncForeground(card);
         ensureHeader(card);
@@ -551,6 +576,35 @@ final class NativeCameraCard {
         surface.update(paints);
         updateMaterialOutline(card);
     }
+
+    boolean sharedTemplateTransition(View card) {
+        return pageBackgroundType != null && Reflect.get(content, card) instanceof ViewGroup body
+                && body.getChildCount() > 1;
+    }
+
+    void resizeSharedMaterials(ViewGroup card, int height) {
+        if (!(Reflect.get(content, card) instanceof ViewGroup body)) return;
+        resizeMaterialHeights.put(card, height);
+        collectResizingMaterials(body, card);
+        syncMaterials(card, body);
+    }
+
+    private void collectResizingMaterials(View view, ViewGroup card) {
+        if (pageBackgroundType.isInstance(view) || mediaBackgroundType != null && mediaBackgroundType.isInstance(view)) {
+            decorateLayer(view, card, 0, true);
+        } else if (sharedStrokeHosts.contains(view)) {
+            decorateLayer(view, card, 0, false);
+        }
+        if (view instanceof ViewGroup group)
+            for (int i = 0; i < group.getChildCount(); i++) collectResizingMaterials(group.getChildAt(i), card);
+    }
+
+    void finishSharedMaterialResize(View card) {
+        if (resizeMaterialHeights.remove(card) == null) return;
+        restoreBackgrounds(card);
+        if (cameraContentInset(card) > 0) afterLayout(card, true);
+    }
+
     private void updateMaterialOutline(View card) {
         var reference = materialSurfaces.get(card);
         CameraMaterialSurface surface = reference == null ? null : reference.get();
@@ -563,7 +617,8 @@ final class NativeCameraCard {
         Rect mask = activeMorphMask(card);
         // Instant cards need their contour at the morph edge for the first appear.
         // For regular cards the animated clip must cut away the full card's contour.
-        Rect material = mask != null && external.containsKey(card)
+        Integer resized = resizeMaterialHeights.get(card);
+        Rect material = resized != null ? new Rect(0, 0, card.getWidth(), resized) : mask != null && external.containsKey(card)
                 ? mask : new Rect(0, 0, card.getWidth(), card.getHeight());
         surface.updateOutline(new MaterialOutline(card.getOutlineProvider(), mask == null ? null : new Rect(mask),
                 card.getWidth(), card.getHeight()), material);
@@ -577,10 +632,28 @@ final class NativeCameraCard {
         if (pair != null && pair.background() != null) paints.add(new CameraMaterialSurface.Paint(pair.background(), alpha));
         if (view instanceof ViewGroup group) for (int i = 0; i < group.getChildCount(); i++)
             collectMaterials(group.getChildAt(i), body, paints);
-        // Only empty full-page decoration foregrounds move below the controls.
-        // A content-bearing SDK foreground can be a spotlight and remains native.
-        if (pair != null && pair.foreground() != null && backgrounds.containsKey(view))
+        // The shared page's fallback stroke is a separate foreground on the content
+        // root. Its original bounds start below the camera inset, just like the body.
+        // Other content-bearing foregrounds can be spotlights and stay in place.
+        if (pair != null && pair.foreground() != null && (backgrounds.containsKey(view)
+                || sharedStrokeHosts.contains(view) && pair.foreground().nativeDrawable instanceof GradientDrawable))
             paints.add(new CameraMaterialSurface.Paint(pair.foreground(), alpha));
+    }
+
+    void registerSharedStroke(View view) { sharedStrokeHosts.add(view); }
+    boolean isSharedStrokeHost(View view) { return sharedStrokeHosts.contains(view); }
+
+    void exposeSharedStroke(View view) {
+        // The native color updater checks instanceof GradientDrawable and then sets
+        // the stroke color. Let it update the original before the next pre-draw.
+        Decorations pair = decorations.get(view);
+        CardHeaderDrawable stroke = pair == null ? null : pair.foreground();
+        if (stroke == null || view.getForeground() != stroke
+                || !(stroke.nativeDrawable instanceof GradientDrawable gradient)) return;
+        stroke.release();
+        if (pair.background() == null) decorations.remove(view);
+        else decorations.put(view, new Decorations(pair.background(), null));
+        view.setForeground(gradient);
     }
     private void removeMaterialSurface(View card) {
         var reference = materialSurfaces.remove(card);
@@ -647,18 +720,25 @@ final class NativeCameraCard {
     }
     private void extendContainerDecorations(View view, View body, View card, int inset) {
         if (view == null) return;
-        if (view instanceof FrameLayout group && view.getClass() == FrameLayout.class
+        boolean container = view instanceof FrameLayout group && view.getClass() == FrameLayout.class
                 && group.getChildCount() > 0 && fullPageBounds(view, body)
-                && !view.isClickable() && !view.isLongClickable() && !view.isFocusable()) {
-            decorateLayer(view, card, inset);
-        }
+                && !view.isClickable() && !view.isLongClickable() && !view.isFocusable();
+        if (container || sharedStrokeHosts.contains(view) && fullPageBounds(view, body))
+            decorateLayer(view, card, inset, container);
         if (view instanceof ViewGroup group) for (int i = 0; i < group.getChildCount(); i++)
             extendContainerDecorations(group.getChildAt(i), body, card, inset);
     }
-    private void decorateLayer(View view, View card, int inset) {
+    private void decorateLayer(View view, View card, int inset, boolean includeBackground) {
         Decorations previous = decorations.get(view);
-        CardHeaderDrawable bg = decorate(view.getBackground(), previous == null ? null : previous.background(), inset);
-        CardHeaderDrawable fg = decorate(view.getForeground(), previous == null ? null : previous.foreground(), inset);
+        var background = view.getBackground();
+        var foreground = view.getForeground();
+        if (!includeBackground && foreground instanceof CardHeaderDrawable wrapper
+                && !(wrapper.nativeDrawable instanceof GradientDrawable)) return;
+        if (!includeBackground && !(foreground instanceof GradientDrawable || foreground instanceof CardHeaderDrawable))
+            foreground = null;
+        CardHeaderDrawable bg = includeBackground ? decorate(background, previous == null ? null : previous.background(), inset)
+                : previous == null ? null : previous.background();
+        CardHeaderDrawable fg = decorate(foreground, previous == null ? null : previous.foreground(), inset);
         if (bg != null || fg != null) {
             decorations.put(view, new Decorations(bg, fg));
             if (bg != null && view.getBackground() != bg) view.setBackground(bg);
@@ -667,7 +747,7 @@ final class NativeCameraCard {
             if (bg != null) bg.bind();
             if (fg != null) fg.bind();
             unclip(view, card);
-        }
+        } else decorations.remove(view);
     }
     private CardHeaderDrawable decorate(android.graphics.drawable.Drawable current, CardHeaderDrawable previous, int inset) {
         if (current == previous && previous != null) { previous.inset(inset); return previous; }
@@ -847,6 +927,7 @@ final class NativeCameraCard {
         morphMasks.clear();
         frameTraces.clear();
         external.clear();
+        resizeMaterialHeights.clear();
         restoreSurfaces(null);
     }
     String describe(Object owner) {

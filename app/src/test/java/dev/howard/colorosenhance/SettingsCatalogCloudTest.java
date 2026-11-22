@@ -23,8 +23,10 @@ public class SettingsCatalogCloudTest {
     @Test public void cloudCatalogContainsThreeScenePairsWithOemDefaults() {
         SettingsCatalog.Group cloud = SettingsCatalog.find("cloud");
         assertNotNull(cloud);
-        assertEquals(List.of("notification_cloud_enabled", "notification_popup_seconds", "notification_capsule_max_dp", "keep_paused_music", "media_card_in_shade", "realtime_media_wave", "wave_interval_ms", "wave_sensitivity", "wave_attack_ms", "wave_release_ms", "wave_hold_paused", "capsule_size_enabled", "capsule_height_percent", "capsule_offset_x_dp", "capsule_offset_y_dp", "hide_capsule_stroke", "hide_capsule_arrows",
-                "capsule_corners_enabled", "capsule_continuous_corners", "capsule_keep_in_foreground", "skip_empty_capsule", "block_capsule_click_top", "selected_card_first", "camera_card_expansion", "card_dim_enabled",
+        assertEquals(List.of("notification_cloud_enabled", "notification_popup_seconds", "notification_capsule_max_dp", "keep_paused_music", "media_card_in_shade", "realtime_media_wave", "wave_interval_ms", "wave_sensitivity", "wave_attack_ms", "wave_release_ms", "wave_hold_paused", "capsule_size_enabled", "capsule_height_percent", "hide_capsule_stroke", "hide_capsule_arrows",
+                "capsule_corners_enabled", "capsule_continuous_corners", "capsule_keep_in_foreground",
+                "capsule_offset_x_dp", "capsule_offset_y_dp", "capsule_landscape_offset_x_dp", "capsule_landscape_offset_y_dp",
+                "skip_empty_capsule", "block_capsule_click_top", "selected_card_first", "camera_card_expansion", "card_dim_enabled",
                 "card_corners_enabled", "card_continuous_corners", "unbind_status_bar", "capsule_on_top", "capsule_keep_during_launch", "fullscreen", "fullscreen_animation",
                 "recents", "recents_shrink", "shade_keep", "shade_collapse_on_open", "other_keep", "other_animation",
                 "landscape_follow_portrait", "landscape_fullscreen", "landscape_fullscreen_animation", "landscape_recents", "landscape_recents_shrink",
@@ -35,12 +37,18 @@ public class SettingsCatalogCloudTest {
     }
 
     @Test public void capsulePositionAndExpandedCornerLimitsUseTheSharedNumberSettings() {
-        var enabled = Map.<String, Object>of("enabled", true);
-        for (String key : List.of("capsule_offset_x_dp", "capsule_offset_y_dp")) {
+        var enabled = Map.<String, Object>of("enabled", true, "landscape_follow_portrait", true);
+        var positionKeys = List.of("capsule_offset_x_dp", "capsule_offset_y_dp",
+                "capsule_landscape_offset_x_dp", "capsule_landscape_offset_y_dp");
+        assertEquals(positionKeys, SettingsLayout.items(null, "cloud_capsule").stream()
+                .filter(item -> item.section().equals("小胶囊位置")).map(SettingsCatalog.Item::key).toList());
+        for (String key : positionKeys) {
             var offset = item(key);
             assertTrue(offset.valueOnly());
             assertEquals(0, offset.valueDefault());
+            assertTrue(offset.visible(enabled));
             assertTrue(SettingsCatalog.controlEnabled("cloud", key, enabled));
+            assertFalse(SettingsCatalog.controlEnabled("cloud", key, Map.of("enabled", false)));
             assertTrue(SettingsCoordinator.validValue("cloud", key, offset.min()));
             assertTrue(SettingsCoordinator.validValue("cloud", key, offset.max()));
             assertFalse(SettingsCoordinator.validValue("cloud", key, offset.min() - 1));

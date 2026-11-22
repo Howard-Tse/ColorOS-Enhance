@@ -26,12 +26,13 @@ final class NativeCardGlass {
     private final Class<?> card, instant;
     private final Set<ClassLoader> attempted = Collections.newSetFromMap(new WeakHashMap<>());
     private final Set<View> outlineHosts = Collections.newSetFromMap(new WeakHashMap<>());
-    private final Set<View> sharedPages = Collections.newSetFromMap(new WeakHashMap<>());
     private final WeakHashMap<View, AnchorGravity> centered = new WeakHashMap<>();
     private final Materials materials = new Materials();
     private final ArrayList<XposedInterface.HookHandle> hooks = new ArrayList<>();
     private boolean closed;
     private NativeTemplateStroke sharedStroke;
+    private NativeTemplateStroke.Contour sharedContour;
+    private final Set<View> alignedStrokeHosts = Collections.newSetFromMap(new WeakHashMap<>());
     private record AnchorGravity(FrameLayout.LayoutParams params, int original, int applied) { }
 
     NativeCardGlass(HookEntry module, Supplier<CloudCorners.Style> currentStyle, NativeCameraCard cameraCards,
@@ -98,7 +99,7 @@ final class NativeCardGlass {
         hooks.add(module.hook(outline).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
             CloudCorners.Style style = currentStyle.get();
             View view = (View) chain.getArg(0);
-            if (!style.enabled() || !(media.isInstance(view) || sharedPages.contains(view)) || !inExpandedCard(view))
+            if (!style.enabled() || !(media.isInstance(view) || cameraCards.isSharedStrokeHost(view)) || !inExpandedCard(view))
                 return chain.proceed();
             float radius = style.dp() * view.getResources().getDisplayMetrics().density;
             Object corners = profile.newInstance(style.continuous() ? 2 : 0, radius,
@@ -116,25 +117,64 @@ final class NativeCardGlass {
         Class<?> page = Reflect.type(loader, TEMPLATE + "page.entity.t");
         Class<?> continuation = Reflect.type(loader, "kotlin.coroutines.Continuation");
         var owner = Reflect.field(updates, "c", page);
+        var branch = Reflect.field(updates, "b", int.class);
         var root = Reflect.field(page, "k", ViewGroup.class);
         Method update = Reflect.method(updates, "a", Object.class, Object.class, continuation);
         sharedStroke = new NativeTemplateStroke(loader);
+        try {
+            Class<?> tuple = Reflect.type(loader, "kotlin.Triple");
+            var factory = Reflect.method(Reflect.type(loader, "com.oplus.systemui.plugins.seedling.util.c"), "f", tuple);
+            var materialPath = Reflect.method(Reflect.type(loader, "com.oplus.systemui.plugins.common.util.l"),
+                    "a", void.class, android.graphics.Path.class, int.class, int.class, int.class, int.class, tuple);
+            // Use the path drawn by CardGradientOverlayView. The framework outline
+            // can fall back from G2 to a circular path in battery saver.
+            sharedContour = new NativeTemplateStroke.Contour((path, bounds) ->
+                    Reflect.call(materialPath, null, path, bounds.left, bounds.top, bounds.right, bounds.bottom,
+                            Reflect.call(factory, null)));
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+            module.error("Native full-card stroke outline unavailable", unavailable);
+        }
         hooks.add(module.hook(update).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
+            Object callback = chain.getThisObject();
+            View view = (View) Reflect.get(root, Reflect.get(owner, callback));
+            cameraCards.registerSharedStroke(view);
+            if (branch.getInt(callback) == 2) cameraCards.exposeSharedStroke(view);
             Object result = chain.proceed();
-            View view = (View) Reflect.get(root, Reflect.get(owner, chain.getThisObject()));
-            sharedPages.add(view);
             refreshSharedStroke(view);
             return result;
         }));
     }
 
     private void refreshSharedStroke(View view) throws IllegalAccessException {
-        if (!inExpandedCard(view)) return;
+        View owner = expandedCard(view);
+        if (owner == null) return;
         Drawable foreground = view.getForeground();
         if (foreground instanceof CardHeaderDrawable wrapper) foreground = wrapper.nativeDrawable;
-        if (foreground instanceof GradientDrawable gradient)
-            sharedStroke.apply(gradient, currentStyle.get(), view.getResources().getDisplayMetrics().density);
+        if (foreground instanceof GradientDrawable gradient) {
+            CloudCorners.Style style = currentStyle.get();
+            GradientDrawable original = NativeTemplateStroke.original(gradient);
+            sharedStroke.apply(original, style, view.getResources().getDisplayMetrics().density);
+            if (sharedContour != null && (style.enabled() || module.config.expandFromCamera())) {
+                GradientDrawable aligned = sharedContour.wrap(gradient, owner, currentStyle,
+                        cardView -> cameraCards.cameraContentInset(cardView) > 0);
+                if (aligned != gradient) {
+                    cameraCards.exposeSharedStroke(view);
+                    view.setForeground(aligned);
+                    NativeTemplateStroke.bind(aligned);
+                    alignedStrokeHosts.add(view);
+                }
+            } else if (original != gradient) restoreAlignedStroke(view);
+        }
         view.invalidateOutline();
+    }
+
+    private void restoreAlignedStroke(View host) {
+        cameraCards.exposeSharedStroke(host);
+        if (host.getForeground() instanceof GradientDrawable gradient) {
+            GradientDrawable original = NativeTemplateStroke.original(gradient);
+            if (original != gradient) host.setForeground(original);
+        }
+        alignedStrokeHosts.remove(host);
     }
 
     private static Shape readUniforms(int mode, float[] values) {
@@ -152,7 +192,7 @@ final class NativeCardGlass {
 
     private void captureTemplate(View view) throws IllegalAccessException {
         // SystemUI can use a Seedling loader distinct from the plugin manager exposed to clients.
-        if (sharedPages.contains(view)) refreshSharedStroke(view);
+        if (cameraCards.isSharedStrokeHost(view)) refreshSharedStroke(view);
         String name = view.getClass().getName();
         View anchor = view.getClass().getClassLoader() != View.class.getClassLoader() ? cardAnchor(view) : null;
         if (anchor != null || name.startsWith("v6.") || name.startsWith("com.oplus.ule.lite.")) {
@@ -201,7 +241,7 @@ final class NativeCardGlass {
             int height = owner != null
                     ? CloudCorners.compactCardHeight(initial, root.getMeasuredWidth(), heightSpec,
                             style.requested(root.getResources().getDisplayMetrics().density),
-                            cameraCards.cameraContentInset(owner))
+                            cameraCards.cameraInsetOutsideMeasure(root, owner))
                     : initial;
             if (height == initial) {
                 center(anchor, false);
@@ -491,7 +531,7 @@ final class NativeCardGlass {
             }
         }
         outlineHosts.clear();
-        sharedPages.clear();
+        for (View host : new ArrayList<>(alignedStrokeHosts)) if (host != null) restoreAlignedStroke(host);
         for (View anchor : new ArrayList<>(centered.keySet())) if (anchor != null) {
             center(anchor, false);
             anchor.requestLayout();

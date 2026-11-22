@@ -2,86 +2,206 @@ package dev.howard.colorosenhance.controlcenter;
 
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.ColorFilter;
 import android.graphics.LinearGradient;
+import android.graphics.Matrix;
 import android.graphics.Paint;
+import android.graphics.PixelFormat;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
+import android.graphics.RectF;
 import android.graphics.Shader;
+import android.graphics.drawable.Drawable;
 import android.view.View;
 import android.view.ViewGroup;
+import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.function.IntSupplier;
 
-/** Exterior-only pager fade. Native bounds, page stride and input are unchanged. */
+/** Draws the clipped portion of moving tiles in the narrow gutter outside the native page. */
 final class ControlCenterPageFade implements AutoCloseable {
-    record Target(ViewGroup view,IntSupplier offset){}
-    private final Map<ViewGroup,Page> pages=new IdentityHashMap<>();
-    private final Map<ViewGroup,Boolean> parents=new IdentityHashMap<>();
-    void sync(List<Target> targets){
-        var wanted=java.util.Collections.newSetFromMap(new IdentityHashMap<ViewGroup,Boolean>());
-        for(Target target:targets)if(target.view().getWidth()>0 && target.view().getHeight()>0 && target.view().getVisibility()==View.VISIBLE){
-            ViewGroup view=target.view();wanted.add(view);
-            Page page=pages.computeIfAbsent(view,Page::new);page.offset=target.offset();page.update();
-        }
-        pages.entrySet().removeIf(entry->{if(wanted.contains(entry.getKey()))return false;entry.getValue().close();return true;});
-        var needed=java.util.Collections.newSetFromMap(new IdentityHashMap<ViewGroup,Boolean>());
-        for(Page page:pages.values())if((page.leftLimit>0 || page.rightLimit>0) && page.view.getParent() instanceof ViewGroup parent)needed.add(parent);
-        parents.entrySet().removeIf(entry->{if(needed.contains(entry.getKey()))return false;restoreParent(entry.getKey(),entry.getValue());return true;});
-        for(ViewGroup parent:needed){
-            if(!parents.containsKey(parent) || parent.getClipChildren())parents.put(parent,parent.getClipChildren());
-            if(parent.getClipChildren())parent.setClipChildren(false);
-        }
+    record Target(ViewGroup view, IntSupplier offset) {}
+
+    interface TileDraw {
+        void draw(ViewGroup pager, Canvas canvas, View tile);
     }
-    boolean contains(View view){return pages.containsKey(view);}
-    int begin(View view,Canvas canvas){return pages.get(view).begin(canvas);}
-    void end(View view,Canvas canvas,int save){try{pages.get(view).end(canvas);}finally{canvas.restoreToCount(save);}}
-    @Override public void close(){for(Page page:pages.values())page.close();pages.clear();for(var entry:parents.entrySet())restoreParent(entry.getKey(),entry.getValue());parents.clear();}
-    private static void restoreParent(ViewGroup parent,boolean original){if(!parent.getClipChildren())parent.setClipChildren(original);}
-    static float motionDistance(int offset,int width){if(width<=0)return 0;int within=Math.floorMod(offset,width);return Math.min(within,width-within);}
-    private static final class Page {
-        final ViewGroup view;
-        final Paint mask=new Paint();
-        IntSupplier offset;
-        boolean padding;
-        float leftLimit,rightLimit,left,right,drawLeft,drawRight;
-        float cachedLeft=Float.NaN,cachedRight=Float.NaN,cachedStart,cachedEnd;
-        Page(ViewGroup view){this.view=view;padding=view.getClipToPadding();mask.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_IN));}
-        void update(){
-            // Preserve later native writes when taking the clipping lease again.
-            if(view.getClipToPadding()){padding=true;view.setClipToPadding(false);}
-            float limit=20*view.getResources().getDisplayMetrics().density;
-            leftLimit=rightLimit=limit;
-            if(view.getParent() instanceof ViewGroup parent){
-                float start=view.getLeft()+view.getPaddingLeft(),end=view.getRight()-view.getPaddingRight();
-                leftLimit=Math.min(limit,Math.max(0,start-(parent.getClipToPadding()?parent.getPaddingLeft():0)));
-                rightLimit=Math.min(limit,Math.max(0,parent.getWidth()-(parent.getClipToPadding()?parent.getPaddingRight():0)-end));
-                for(int i=0;i<parent.getChildCount();i++){
-                    View other=parent.getChildAt(i);if(other==view || other.getVisibility()!=View.VISIBLE || other.getBottom()<=view.getTop() || other.getTop()>=view.getBottom())continue;
-                    if(other.getRight()<=start)leftLimit=Math.min(leftLimit,start-other.getRight());
-                    if(other.getLeft()>=end)rightLimit=Math.min(rightLimit,other.getLeft()-end);
-                }
-            }else leftLimit=rightLimit=0;
-        }
-        int begin(Canvas canvas){
-            float travel=motionDistance(offset.getAsInt(),view.getWidth());
-            left=Math.min(leftLimit,travel);right=Math.min(rightLimit,travel);
-            if(left==0 && right==0){int save=canvas.save();
-                canvas.clipRect(padding?view.getPaddingLeft():0,padding?view.getPaddingTop():0,
-                        view.getWidth()-(padding?view.getPaddingRight():0),view.getHeight()-(padding?view.getPaddingBottom():0));return save;}
-            float start=view.getPaddingLeft(),end=view.getWidth()-view.getPaddingRight();
-            drawLeft=start-left;drawRight=end+right;
-            if(left!=cachedLeft || right!=cachedRight || start!=cachedStart || end!=cachedEnd){
-                float span=drawRight-drawLeft;
-                mask.setShader(new LinearGradient(drawLeft,0,drawRight,0,new int[]{Color.TRANSPARENT,Color.BLACK,Color.BLACK,Color.TRANSPARENT},
-                        new float[]{0,left/span,(left+end-start)/span,1},Shader.TileMode.CLAMP));
-                cachedLeft=left;cachedRight=right;cachedStart=start;cachedEnd=end;
+
+    private final Map<ViewGroup, Page> pages = new IdentityHashMap<>();
+    private final TileDraw drawTile;
+    private final Consumer<Throwable> failed;
+
+    ControlCenterPageFade(TileDraw drawTile, Consumer<Throwable> failed) {
+        this.drawTile = drawTile;
+        this.failed = failed;
+    }
+
+    void sync(List<Target> targets) {
+        var wanted = Collections.newSetFromMap(new IdentityHashMap<ViewGroup, Boolean>());
+        for (Target target : targets) {
+            ViewGroup view = target.view();
+            if (view.getWidth() <= 0 || view.getHeight() <= 0 || view.getVisibility() != View.VISIBLE
+                    || !(view.getParent() instanceof ViewGroup parent)) continue;
+            wanted.add(view);
+            Page page = pages.get(view);
+            if (page == null || page.parent != parent) {
+                if (page != null) page.close();
+                page = new Page(view, parent);
+                pages.put(view, page);
+                parent.getOverlay().add(page);
             }
-            int save=canvas.saveLayer(drawLeft,0,drawRight,view.getHeight(),null);
-            canvas.clipRect(drawLeft,0,drawRight,view.getHeight());return save;
+            page.offset = target.offset();
+            page.setBounds(0, 0, parent.getWidth(), parent.getHeight());
+            page.pagerDrawn();
         }
-        void end(Canvas canvas){if(left>0 || right>0)canvas.drawRect(drawLeft,0,drawRight,view.getHeight(),mask);}
-        void close(){if(!view.getClipToPadding())view.setClipToPadding(padding);view.invalidate();}
+        pages.entrySet().removeIf(entry -> {
+            if (wanted.contains(entry.getKey())) return false;
+            entry.getValue().close();
+            return true;
+        });
+    }
+
+    boolean contains(View view) { return pages.containsKey(view); }
+
+    void pagerDrawn(View view) {
+        Page page = pages.get(view);
+        if (page != null) page.pagerDrawn();
+    }
+
+    @Override public void close() {
+        for (Page page : pages.values()) page.close();
+        pages.clear();
+    }
+
+    private static float motionDistance(int offset, int width) {
+        if (width <= 0) return 0;
+        int within = Math.floorMod(offset, width);
+        return Math.min(within, width - within);
+    }
+
+    private final class Page extends Drawable {
+        private final ViewGroup view, parent;
+        private final Paint mask = new Paint();
+        private final Matrix gradientMatrix = new Matrix();
+        private final LinearGradient leftGradient = new LinearGradient(0, 0, 1, 0,
+                Color.TRANSPARENT, Color.BLACK, Shader.TileMode.CLAMP);
+        private final LinearGradient rightGradient = new LinearGradient(0, 0, 1, 0,
+                Color.BLACK, Color.TRANSPARENT, Shader.TileMode.CLAMP);
+        private final RectF pageBounds = new RectF(), tileBounds = new RectF(), siblingBounds = new RectF();
+        private IntSupplier offset;
+        private int drawnOffset;
+        private float distance;
+        private boolean unavailable;
+
+        Page(ViewGroup view, ViewGroup parent) {
+            this.view = view;
+            this.parent = parent;
+            mask.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_IN));
+        }
+
+        void pagerDrawn() {
+            if (unavailable) return;
+            int nextOffset = offset.getAsInt();
+            float nextDistance = motionDistance(nextOffset, view.getMeasuredWidth());
+            if (nextDistance != distance || nextDistance > 0 && nextOffset != drawnOffset) invalidateSelf();
+            drawnOffset = nextOffset;
+            distance = nextDistance;
+        }
+
+        @Override public void draw(Canvas canvas) {
+            if (unavailable || distance <= 0 || view.getParent() != parent
+                    || view.getVisibility() != View.VISIBLE || view.getAlpha() <= 0) return;
+            try {
+                drawEdges(canvas);
+            } catch (RuntimeException | LinkageError error) {
+                unavailable = true;
+                failed.accept(error);
+            }
+        }
+
+        private void drawEdges(Canvas canvas) {
+            boolean clipPadding = view.getClipToPadding() && (view.getPaddingLeft() != 0 || view.getPaddingRight() != 0
+                    || view.getPaddingTop() != 0 || view.getPaddingBottom() != 0);
+            // An unclipped stock pager already draws its overflow in the native pass.
+            if ((!clipPadding && !parent.getClipChildren()) || view.getClipBounds() != null) return;
+            float start = clipPadding ? view.getPaddingLeft() : 0;
+            float end = view.getWidth() - (clipPadding ? view.getPaddingRight() : 0);
+            float top = clipPadding ? view.getPaddingTop() : 0;
+            float bottom = view.getHeight() - (clipPadding ? view.getPaddingBottom() : 0);
+            if (start >= end || top >= bottom || view.getScaleX() <= 0) return;
+
+            pageBounds.set(start, top, end, bottom);
+            view.getMatrix().mapRect(pageBounds);
+            pageBounds.offset(view.getLeft(), view.getTop());
+            float low = parent.getClipToPadding() ? parent.getPaddingLeft() : 0;
+            float high = parent.getWidth() - (parent.getClipToPadding() ? parent.getPaddingRight() : 0);
+            for (int i = 0; i < parent.getChildCount(); i++) {
+                View sibling = parent.getChildAt(i);
+                if (sibling == view || sibling.getVisibility() != View.VISIBLE) continue;
+                siblingBounds.set(0, 0, sibling.getWidth(), sibling.getHeight());
+                sibling.getMatrix().mapRect(siblingBounds);
+                siblingBounds.offset(sibling.getLeft(), sibling.getTop());
+                if (siblingBounds.bottom <= pageBounds.top || siblingBounds.top >= pageBounds.bottom) continue;
+                if (siblingBounds.right <= pageBounds.left) low = Math.max(low, siblingBounds.right);
+                if (siblingBounds.left >= pageBounds.right) high = Math.min(high, siblingBounds.left);
+            }
+            float limit = Math.min(distance, 20 * view.getResources().getDisplayMetrics().density);
+            float left = Math.min(limit, Math.max(0, pageBounds.left - low) / view.getScaleX());
+            float right = Math.min(limit, Math.max(0, high - pageBounds.right) / view.getScaleX());
+            if (left <= 0 && right <= 0) return;
+
+            int save = canvas.save();
+            try {
+                canvas.translate(view.getLeft(), view.getTop());
+                canvas.concat(view.getMatrix());
+                canvas.translate(-view.getScrollX(), -view.getScrollY());
+                start += view.getScrollX();
+                end += view.getScrollX();
+                top += view.getScrollY();
+                bottom += view.getScrollY();
+                mask.setAlpha(Math.round(view.getAlpha() * view.getTransitionAlpha() * 255));
+                if (left > 0) drawStrip(canvas, start - left, top, start, bottom, leftGradient);
+                if (right > 0) drawStrip(canvas, end, top, end + right, bottom, rightGradient);
+            } finally {
+                canvas.restoreToCount(save);
+            }
+        }
+
+        private void drawStrip(Canvas canvas, float left, float top, float right, float bottom,
+                               LinearGradient gradient) {
+            int save = 0;
+            try {
+                for (int i = 0; i < view.getChildCount(); i++) {
+                    View child = view.getChildAt(i);
+                    if (child.getVisibility() != View.VISIBLE || child.getAlpha() <= 0) continue;
+                    tileBounds.set(0, 0, child.getWidth(), child.getHeight());
+                    child.getMatrix().mapRect(tileBounds);
+                    tileBounds.offset(child.getLeft(), child.getTop());
+                    if (!tileBounds.intersects(left, top, right, bottom)) continue;
+                    if (save == 0) {
+                        save = canvas.saveLayer(left, top, right, bottom, null);
+                        canvas.clipRect(left, top, right, bottom);
+                    }
+                    drawTile.draw(view, canvas, child);
+                }
+                if (save != 0) {
+                    gradientMatrix.setScale(right - left, 1);
+                    gradientMatrix.postTranslate(left, 0);
+                    gradient.setLocalMatrix(gradientMatrix);
+                    mask.setShader(gradient);
+                    canvas.drawRect(left, top, right, bottom, mask);
+                }
+            } finally {
+                if (save != 0) canvas.restoreToCount(save);
+            }
+        }
+
+        void close() { parent.getOverlay().remove(this); }
+
+        @Override public void setAlpha(int alpha) {}
+        @Override public void setColorFilter(ColorFilter colorFilter) {}
+        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
     }
 }

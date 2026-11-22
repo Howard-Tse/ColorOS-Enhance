@@ -13,9 +13,10 @@ public record CapsulePosition(int horizontalDp, int verticalDp) {
         verticalDp = Math.max(-VERTICAL_LIMIT_DP, Math.min(VERTICAL_LIMIT_DP, verticalDp));
     }
 
-    static CapsulePosition from(Map<String, ?> values) {
-        return new CapsulePosition(values.get("capsule_offset_x_dp") instanceof Integer x ? x : 0,
-                values.get("capsule_offset_y_dp") instanceof Integer y ? y : 0);
+    static CapsulePosition from(Map<String, ?> values, boolean landscape) {
+        String prefix = landscape ? "capsule_landscape_" : "capsule_";
+        return new CapsulePosition(values.get(prefix + "offset_x_dp") instanceof Integer x ? x : 0,
+                values.get(prefix + "offset_y_dp") instanceof Integer y ? y : 0);
     }
 
     static int fit(int offset, int start, int end, int available) {

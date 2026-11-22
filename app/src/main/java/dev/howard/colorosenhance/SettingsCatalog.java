@@ -108,12 +108,6 @@ public final class SettingsCatalog {
         items.add(new Item("小胶囊外观","capsule_height_percent","纵向高度",
                 "按原厂高度的比例调整，100% 保持原厂。",false,"capsule_height_percent",100,50,200,1,1,"%",
                 new Visibility("capsule_size_enabled",true),null));
-        items.add(value("小胶囊外观","capsule_offset_x_dp","横向位置",
-                "负值向左，正值向右，0 dp 为原厂位置。偏移受状态栏可用空间限制。",
-                "capsule_offset_x_dp",0,-CapsulePosition.HORIZONTAL_LIMIT_DP,CapsulePosition.HORIZONTAL_LIMIT_DP,1,1,"dp"));
-        items.add(value("小胶囊外观","capsule_offset_y_dp","纵向位置",
-                "负值向上，正值向下，0 dp 为原厂位置。可移动距离随胶囊高度变化。",
-                "capsule_offset_y_dp",0,-CapsulePosition.VERTICAL_LIMIT_DP,CapsulePosition.VERTICAL_LIMIT_DP,1,1,"dp"));
         items.add(flag("小胶囊外观","hide_capsule_stroke","隐藏小胶囊边框",
                 "隐藏深色背景下的原生边框；关闭后按当前背景恢复系统处理。"));
         items.add(flag("小胶囊外观","hide_capsule_arrows","隐藏左右切换提示",
@@ -124,6 +118,8 @@ public final class SettingsCatalog {
                 "启用自定义圆角后，使直边与弯曲边缘平滑衔接。"));
         items.add(flag("小胶囊外观","capsule_keep_in_foreground","前台应用内保留流体云胶囊",
                 "开启后，来源应用在前台时仍可显示自己的胶囊。关闭时保持 ColorOS 原厂行为。"));
+        addCapsulePosition(items, "竖屏", "capsule_");
+        addCapsulePosition(items, "横屏", "capsule_landscape_");
         items.add(flag("小胶囊切换","skip_empty_capsule","跳过空白状态，循环切换",
                 "左右滑动仅在当前有效流体云之间循环；只有一个时保持当前项。不影响系统主动隐藏流体云。"));
         items.add(flag("点击交互","block_capsule_click_top","防止点击流体云触发回顶",
@@ -155,6 +151,15 @@ public final class SettingsCatalog {
     private static Item waveNumber(String key,String title,String description,int fallback,int min,int max,int step,String unit){
         return new Item("媒体实时律动参数",key,title,description,false,key,fallback,min,max,step,1,unit,
                 new Visibility("realtime_media_wave",true),null);
+    }
+    private static void addCapsulePosition(List<Item> items, String orientation, String prefix) {
+        String horizontal = prefix + "offset_x_dp", vertical = prefix + "offset_y_dp";
+        items.add(value("小胶囊位置", horizontal, orientation + "横向位置",
+                "负值向左，正值向右，0 dp 为原厂位置。偏移受状态栏可用空间限制。",
+                horizontal, 0, -CapsulePosition.HORIZONTAL_LIMIT_DP, CapsulePosition.HORIZONTAL_LIMIT_DP, 1, 1, "dp"));
+        items.add(value("小胶囊位置", vertical, orientation + "纵向位置",
+                "负值向上，正值向下，0 dp 为原厂位置。可移动距离随胶囊高度变化。",
+                vertical, 0, -CapsulePosition.VERTICAL_LIMIT_DP, CapsulePosition.VERTICAL_LIMIT_DP, 1, 1, "dp"));
     }
     private static void addOrientationScenes(List<Item> items, String orientation, String prefix) {
         addScene(items,orientation+" · 进入/退出全屏",prefix+"fullscreen",prefix+"fullscreen_animation",
@@ -188,6 +193,7 @@ public final class SettingsCatalog {
                 || "camera_card_expansion".equals(key) || "unbind_status_bar".equals(key)
                 || List.of("hide_capsule_stroke","hide_capsule_arrows","capsule_keep_in_foreground","skip_empty_capsule","card_dim_enabled",
                         "capsule_corners_enabled","card_corners_enabled","capsule_size_enabled","capsule_offset_x_dp","capsule_offset_y_dp",
+                        "capsule_landscape_offset_x_dp","capsule_landscape_offset_y_dp",
                         "selected_card_first").contains(key)
                 || Boolean.TRUE.equals(values.get("unbind_status_bar"));
     }

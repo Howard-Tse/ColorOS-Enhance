@@ -4,7 +4,6 @@ import dev.howard.colorosenhance.diagnostics.DiagnosticPoint;
 import dev.howard.colorosenhance.diagnostics.DiagnosticReporter;
 
 import android.content.SharedPreferences;
-import android.graphics.Canvas;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -109,11 +108,10 @@ public final class ControlCenterModule extends XposedModule {
                 Object result=chain.proceed();safe(()->{for(var session:sessions.values())session.nativePages(chain.getThisObject());});return result;
             }));
             hooks.add(hook(api.draw).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain->{
-                View view=(View)chain.getThisObject();ControlCenterSession owner=null;
-                for(var session:sessions.values())if(session.fade(view)){owner=session;break;}
-                if(owner==null)return chain.proceed();
-                Canvas canvas=(Canvas)chain.getArg(0);int save=owner.beginFade(view,canvas);
-                try{return chain.proceed();}finally{owner.endFade(view,canvas,save);}
+                Object result=chain.proceed();
+                View view=(View)chain.getThisObject();
+                for(var session:sessions.values())if(session.fade(view)){safe(()->session.pagerDrawn(view));break;}
+                return result;
             }));
             deoptimize(api.attach);deoptimize(api.dispatch);deoptimize(api.intercept);deoptimize(api.touch);deoptimize(api.subSize);deoptimize(api.setLocations);deoptimize(api.gridNum);deoptimize(api.refreshPages);
             DiagnosticReporter.report(DiagnosticPoint.CONTROL_CENTER, DiagnosticPoint.State.INSTALLED);

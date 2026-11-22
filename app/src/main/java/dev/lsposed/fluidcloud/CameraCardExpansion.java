@@ -185,6 +185,14 @@ final class CameraCardExpansion {
                         safe(() -> nativeCard.align((View) chain.getThisObject(), true));
                     return result;
                 }));
+                int reflowHooks = hooks.size();
+                try {
+                    NativeCardHeightReflow.install(module, nativeCard, hooks);
+                    module.info("Native card height reflow installed");
+                } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+                    while (hooks.size() > reflowHooks) hooks.removeLast().unhook();
+                    module.error("Native card height reflow unavailable", unavailable);
+                }
                 contracts.add(new Installed(loader, nativeCard, instant, hooks, glass));
                 module.info("Native camera card geometry installed (" + (nativeCard.legacy ? "legacy" : "current") + ")");
             } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {

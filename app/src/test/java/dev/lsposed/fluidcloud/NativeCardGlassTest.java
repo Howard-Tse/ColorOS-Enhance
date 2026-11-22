@@ -71,6 +71,35 @@ public class NativeCardGlassTest {
         assertSame(host, NativeCardGlass.Materials.drawableHost(drawable));
     }
 
+    @Test @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    public void sharedStrokeFollowsTheCardMaterialPathAndStillUsesTheNativeColor() throws Exception {
+        var card = new View(RuntimeEnvironment.getApplication());
+        card.layout(0, 0, 160, 112);
+        var stock = new android.graphics.drawable.GradientDrawable();
+        stock.setColor(android.graphics.Color.TRANSPARENT);
+        stock.setStroke(5, android.graphics.Color.RED);
+        stock.setCornerRadius(55);
+        var style = new java.util.concurrent.atomic.AtomicReference<>(new CloudCorners.Style(true, 8, false));
+        var contour = new NativeTemplateStroke.Contour((path, bounds) ->
+                path.addRoundRect(new android.graphics.RectF(bounds), style.get().dp(), style.get().dp(),
+                        android.graphics.Path.Direction.CW));
+        var stroke = contour.wrap(stock, card, style::get, view -> false);
+        stroke.setBounds(0, 0, card.getWidth(), card.getHeight());
+        var image = android.graphics.Bitmap.createBitmap(160, 112, android.graphics.Bitmap.Config.ARGB_8888);
+        var canvas = new android.graphics.Canvas(image);
+        stroke.draw(canvas);
+        assertEquals(android.graphics.Color.RED, image.getPixel(20, 2));
+        assertEquals(android.graphics.Color.TRANSPARENT, image.getPixel(20, 20));
+
+        stroke.setStroke(5, android.graphics.Color.GREEN);
+        style.set(new CloudCorners.Style(true, 55, false));
+        image.eraseColor(android.graphics.Color.TRANSPARENT);
+        stroke.draw(canvas);
+        assertEquals(android.graphics.Color.TRANSPARENT, image.getPixel(20, 2));
+        assertEquals(android.graphics.Color.GREEN, image.getPixel(80, 2));
+        assertSame(stock, NativeTemplateStroke.original(stroke));
+    }
+
     private static final class TestSurface implements NativeCardGlass.Surface {
         NativeCardGlass.Shape shape;
         int writes;
