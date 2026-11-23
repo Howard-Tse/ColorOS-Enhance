@@ -442,7 +442,7 @@ final class NativeSettingsPage {
         Object exceptions = category("notification_exceptions", "应用与渠道例外");
         jump(exceptions, "notification_channels", "逐应用设置", () -> open("cloud_notification_apps"));
         Object help = jump(exceptions, "notification_help", "渠道获取与处理规则", () -> { });
-        host.call(help, "setSummary", "选择应用后可查询实际渠道名称与 ID；应用尚未创建渠道时，先发一条通知再刷新。静默按系统重要程度分类，不跟随手机响铃模式。锁屏、已有原生流体云、媒体与系统关键提醒保持原厂处理。");
+        host.call(help, "setSummary", "选择应用后可查询渠道名称与 ID。应用尚未创建渠道时，可先发一条通知再刷新。静默通知按系统重要程度分类。系统关键提醒、已有流体云和媒体通知沿用系统处理。通知转成的卡片只在解锁后自动弹出。");
         host.call(help, "setSelectable", false);
         jump(exceptions, "notification_test", "发送模块自测通知", () -> context.startActivity(new android.content.Intent()
                 .setClassName(dev.howard.colorosenhance.BuildConfig.PUBLIC_APPLICATION_ID,
@@ -659,7 +659,7 @@ final class NativeSettingsPage {
                 if ("cloud_notifications".equals(pageRoute)) {
                     var rules = dev.howard.colorosenhance.notifications.NotificationCloudRules.from(valueMap("cloud"));
                     for (var option : dev.howard.colorosenhance.notifications.NotificationSettingsOptions.ALL) {
-                        String key = "notification_option_" + option.key(); enabled(key, writable);
+                        String key = "notification_option_" + option.key(); enabled(key, writable && option.available(rules));
                         if (option.toggle()) checked(key, option.selection(rules) == 1);
                         summary(controls.get(key), option.description(rules));
                     }

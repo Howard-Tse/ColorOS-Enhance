@@ -1,6 +1,5 @@
 package dev.lsposed.fluidcloud;
 
-import android.app.AlertDialog;
 import android.app.Notification;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
@@ -124,7 +123,7 @@ final class NotificationCloudActions {
             if (actions.size() < 2) actions.add(item);
         }
         var latest = group.getLast();
-        if (rules.floating(latest.app()) && supportsFloating(latest.value())) {
+        if (feature.unlocked() && rules.floating(latest.app()) && supportsFloating(latest.value())) {
             actions.add(new Notification.Action.Builder((Icon) null, "浮窗打开",
                     floatingButton(latest.key(), latest.revision(), latest.value().getNotification().contentIntent)).build());
         }
@@ -188,33 +187,16 @@ final class NotificationCloudActions {
             n.extras.putString(Notification.EXTRA_TEMPLATE, "");
         }
     }
-    void more(String key, android.view.View anchor) {
-        var group = feature.group(key);
-        if (group.size() > 1) {
-            List<String> labels = new ArrayList<>(); List<Runnable> operations = new ArrayList<>();
-            for (var item : group) {
-                Notification notification = item.value().getNotification();
-                labels.add(notification.extras.getCharSequence(Notification.EXTRA_TITLE, "通知") + "\n" + notification.extras.getCharSequence(Notification.EXTRA_TEXT, ""));
-                operations.add(() -> moreItem(item.key(), anchor));
-            }
-            showMenu(anchor, "本组 " + group.size() + " 条通知", labels, operations); return;
-        }
-        moreItem(key, anchor);
-    }
     List<MenuAction> nativeMenu(String key) {
         var group = feature.group(key);
         if (group.isEmpty()) return List.of();
         var result = new ArrayList<MenuAction>();
-        if (group.size() > 1) {
-            result.add(new MenuAction("查看本组 " + group.size() + " 条通知", () -> more(key, null)));
+        if (group.size() > 1 && feature.groupNavigationSupported()) {
+            NotificationCloudGrouping.Identity identity = NotificationCloudGrouping.identity(group.getFirst().value());
+            result.add(new MenuAction("查看本组 " + group.size() + " 条通知", () -> feature.openCollectionGroup(identity)));
         }
         result.addAll(itemActions(group.get(group.size() - 1).key()));
         return result;
-    }
-    void moreItem(String key, android.view.View anchor) {
-        var menu = itemActions(key);
-        if (menu.isEmpty()) return;
-        showMenu(anchor, "通知操作", menu.stream().map(MenuAction::label).toList(), menu.stream().map(MenuAction::run).toList());
     }
     private List<MenuAction> itemActions(String key) {
         var entry = feature.store.get(key); if (entry == null) return List.of();
@@ -267,37 +249,6 @@ final class NotificationCloudActions {
             if (status != null) Reflect.call(Reflect.method(status.getClass(), "collapsePanels", void.class), status);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
             feature.failure("Notification shade could not close after floating launch", unavailable);
-        }
-    }
-    private void showMenu(android.view.View anchor, String title, List<String> labels, List<Runnable> operations) {
-        if (anchor != null && anchor.isAttachedToWindow() && feature.unlocked()) {
-            android.widget.PopupMenu menu = new android.widget.PopupMenu(anchor.getContext(), anchor);
-            for (int i = 0; i < labels.size(); i++) menu.getMenu().add(0, i, i, labels.get(i));
-            menu.setOnMenuItemClickListener(item -> {
-                if (feature.enabled() && feature.unlocked()) operations.get(item.getItemId()).run();
-                return true;
-            });
-            menu.show();
-        } else feature.closeCard(() -> showClosedMenu(title, labels, operations));
-    }
-    private void showClosedMenu(String title, List<String> labels, List<Runnable> operations) {
-        if (!feature.enabled() || !feature.unlocked()) return;
-        try {
-            Class<?> type = Class.forName("com.android.systemui.statusbar.phone.SystemUIDialog", false, context.getClassLoader());
-            AlertDialog dialog = (AlertDialog) type.getDeclaredConstructor(Context.class).newInstance(context);
-            dialog.setTitle(title);
-            android.widget.ListView list = new android.widget.ListView(context);
-            list.setAdapter(new android.widget.ArrayAdapter<>(context, android.R.layout.simple_list_item_1, labels));
-            list.setOnItemClickListener((parent, view, index, id) -> { dialog.dismiss(); if (feature.unlocked()) operations.get(index).run(); });
-            // ListView's wrap-content measurement otherwise exposes only the first row.
-            int height = Math.min(Math.round(labels.size() * 64 * context.getResources().getDisplayMetrics().density),
-                    Math.round(context.getResources().getDisplayMetrics().heightPixels * .6f));
-            android.widget.FrameLayout content = new android.widget.FrameLayout(context);
-            content.addView(list, new android.widget.FrameLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, height));
-            dialog.setView(content);
-            dialog.show();
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
-            feature.failure("Notification actions dialog unavailable; native rows retained", failure);
         }
     }
     void showOriginal(String key) {

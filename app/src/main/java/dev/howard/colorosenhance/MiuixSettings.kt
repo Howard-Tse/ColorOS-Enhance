@@ -500,7 +500,7 @@ private fun FeaturePage(activity: MainActivity, app: EnhanceApplication, page: S
                             if (option.toggle()) SwitchPreference(option.selection(rules) == 1, { checked ->
                                 onStatus(controller.put("cloud", dev.howard.colorosenhance.notifications.NotificationCloudRules.KEY,
                                     option.change(rules, if (checked) 1 else 0).encode(), state.revision()))
-                            }, option.title(), summary = option.summary(), enabled = state.writable())
+                            }, option.title(), summary = option.summary(), enabled = state.writable() && option.available(rules))
                             else BasicComponent(title = option.title(), summary = option.description(rules), enabled = state.writable(), onClick = {
                                 onModal(SettingsModal.Choice(option.title(), option.labels(), option.selection(rules)) { index ->
                                     onStatus(controller.put("cloud", dev.howard.colorosenhance.notifications.NotificationCloudRules.KEY, option.change(rules, index).encode(), state.revision()))
@@ -520,7 +520,7 @@ private fun FeaturePage(activity: MainActivity, app: EnhanceApplication, page: S
                         activity.startActivity(android.content.Intent(activity, dev.howard.colorosenhance.notifications.NotificationTestActivity::class.java))
                     })
                 }
-                Text("静默按系统重要程度分类。系统关键提醒、已有流体云及媒体通知保持原厂；锁屏时恢复原通知，不自动弹出。", Modifier.padding(12.dp), fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                Text("静默通知按系统重要程度分类。系统关键提醒、已有流体云和媒体通知沿用系统处理。通知转成的卡片只在解锁后自动弹出。", Modifier.padding(12.dp), fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
             }
         }
         if (page.route() == "installer") item("installer_help") { Text(SettingsCatalog.INSTALLER_HELP, Modifier.padding(10.dp), fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary) }

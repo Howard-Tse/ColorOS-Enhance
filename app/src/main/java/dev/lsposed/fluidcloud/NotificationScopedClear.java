@@ -117,7 +117,7 @@ final class NotificationScopedClear {
 
     private Scope scope() {
         boolean collection = feature.collectionPageShowing();
-        Set<String> collected = Set.copyOf(feature.collectedKeys());
+        Set<String> collected = collection ? feature.displayedCollectionKeys() : Set.copyOf(feature.collectedKeys());
         return !collection && collected.isEmpty() ? null :
                 new Scope(allowedKeys(feature.liveNotifications(), collected, collection), collected, collection, java.util.Map.of());
     }

@@ -111,7 +111,7 @@ final class NativeNotificationControls {
             }));
             hooks.add(feature.module.hook(click).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
                 String selected = (String) chain.getArg(0);
-                if (!feature.enabled() || feature.store.get(selected) == null) return chain.proceed();
+                if (!feature.enabled() || !feature.unlocked() || feature.store.get(selected) == null) return chain.proceed();
                 if (feature.rules().directOpen() && feature.store.get(selected).value().getNotification().contentIntent != null) {
                     feature.armGroupOpen(selected);
                     Reflect.call(normal, null, chain.getThisObject(), selected);

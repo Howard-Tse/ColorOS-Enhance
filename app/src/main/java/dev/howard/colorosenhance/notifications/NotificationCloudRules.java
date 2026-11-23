@@ -15,7 +15,7 @@ public record NotificationCloudRules(boolean denylist, Set<String> allowed, Set<
         Mode ongoing, Mode ordinary, Mode silent, Mode calls, Original original, Style style,
         boolean groupApps, boolean directOpen, boolean floating, Map<String, Mode> overrides,
         Map<String, Floating> appFloating, CapsuleText capsuleText, AfterOpen afterOpen,
-        boolean keepAlerts, boolean shadeCards) {
+        boolean keepAlerts, boolean shadeCards, boolean retainOnLock, boolean lockCards) {
     public static final String KEY = "notification_cloud_rules";
     public static final String ENABLED = "notification_cloud_enabled";
     public enum Mode { NATIVE, CAPSULE, EXPAND }
@@ -27,7 +27,7 @@ public record NotificationCloudRules(boolean denylist, Set<String> allowed, Set<
     public enum AfterOpen { KEEP, CARD, BOTH }
     public static final NotificationCloudRules DEFAULT = new NotificationCloudRules(false, Set.of(), Set.of(),
             Mode.CAPSULE, Mode.CAPSULE, Mode.NATIVE, Mode.NATIVE, Original.COLLECT, Style.AUTO,
-            true, false, false, Map.of(), Map.of(), CapsuleText.CONTENT, AfterOpen.KEEP, true, false);
+            true, false, false, Map.of(), Map.of(), CapsuleText.CONTENT, AfterOpen.KEEP, true, false, false, false);
 
     public NotificationCloudRules {
         allowed = Set.copyOf(allowed); denied = Set.copyOf(denied); overrides = Map.copyOf(overrides);
@@ -78,7 +78,7 @@ public record NotificationCloudRules(boolean denylist, Set<String> allowed, Set<
                     o.optBoolean("directOpen", false), o.optBoolean("floating", false), overrides,
                     floatingOverrides(o.optJSONObject("appFloating")), CapsuleText.valueOf(o.optString("capsuleText", "CONTENT")),
                     AfterOpen.valueOf(o.optString("afterOpen", "KEEP")), o.optBoolean("keepAlerts", true),
-                    o.optBoolean("shadeCards", false));
+                    o.optBoolean("shadeCards", false), o.optBoolean("retainOnLock", false), o.optBoolean("lockCards", false));
         } catch (JSONException | IllegalArgumentException failure) { return null; }
     }
     private static Map<String, Floating> floatingOverrides(JSONObject object) throws JSONException {
@@ -108,7 +108,7 @@ public record NotificationCloudRules(boolean denylist, Set<String> allowed, Set<
                     .put("calls", calls.name()).put("original", original.name()).put("style", style.name())
                     .put("groupApps", groupApps).put("directOpen", directOpen).put("floating", floating)
                     .put("capsuleText", capsuleText.name()).put("afterOpen", afterOpen.name()).put("keepAlerts", keepAlerts)
-                    .put("shadeCards", shadeCards)
+                    .put("shadeCards", shadeCards).put("retainOnLock", retainOnLock).put("lockCards", lockCards)
                     .put("appFloating", encodeEnums(appFloating)).put("overrides", encodeEnums(overrides)).toString();
             if (text.length() > 16384) throw new IllegalArgumentException("Too many notification rules");
             return text;
@@ -133,7 +133,7 @@ public record NotificationCloudRules(boolean denylist, Set<String> allowed, Set<
         nextModes.putAll(modes);
         return new NotificationCloudRules(denylist, nextAllowed, nextDenied, ongoing, ordinary, silent, calls, original,
                 style, groupApps, directOpen, this.floating, nextModes, nextFloating, capsuleText, afterOpen,
-                keepAlerts, shadeCards);
+                keepAlerts, shadeCards, retainOnLock, lockCards);
     }
     public List<String> summary() {
         return List.of(denylist ? "黑名单 · " + denied.size() + " 个应用" : "白名单 · " + allowed.size() + " 个应用",

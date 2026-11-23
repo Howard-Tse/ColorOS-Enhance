@@ -45,7 +45,7 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
     private record Appearance(NotificationCloudRules.Style style, NotificationCloudRules.CapsuleText text, int limit,
             boolean floating, Map<String, NotificationCloudRules.Floating> appFloating) { }
     private Appearance appearance;
-    private boolean shadeShown, grouped;
+    private boolean shadeShown, grouped, lockedPlacement;
     private List<NotificationCloudStore.Entry<StatusBarNotification>> projected;
 
     NativeNotificationCloud(NotificationCloudFeature feature, View root, Context host) throws ReflectiveOperationException {
@@ -134,8 +134,10 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
         Appearance rendering = new Appearance(rules.style(), rules.capsuleText(), feature.capsuleMaxDp(),
                 rules.floating(), rules.appFloating());
         boolean changedAppearance = !rendering.equals(appearance);
-        boolean showShade = rules.shadeCards() && shadeListener != null && !notifications.isEmpty();
-        if (autoExpand.isEmpty() && !changedAppearance && showShade == shadeShown && grouped == rules.groupApps()
+        boolean lockCards = !feature.unlocked() && rules.retainOnLock() && rules.lockCards();
+        boolean placementChanged = lockCards != lockedPlacement;
+        boolean showShade = (feature.unlocked() ? rules.shadeCards() : lockCards) && shadeListener != null && !notifications.isEmpty();
+        if (!placementChanged && autoExpand.isEmpty() && !changedAppearance && showShade == shadeShown && grouped == rules.groupApps()
                 && notifications.equals(projected)) return;
         projected = null;
         boolean complete = true;
@@ -153,8 +155,8 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
             try {
                 Object model = models.get(item.key());
                 Object panelModel = shadeModels.get(item.key());
-                boolean rerender = changedAppearance || waitingForTouch.contains(item.key()) || !version.equals(versions.get(item.key()));
-                if (rerender && model != null && controls != null && controls.holds(item.key())) {
+                boolean rerender = placementChanged || changedAppearance || waitingForTouch.contains(item.key()) || !version.equals(versions.get(item.key()));
+                if (!lockCards && !placementChanged && rerender && model != null && controls != null && controls.holds(item.key())) {
                     waitingForTouch.add(item.key());
                     rerender = false;
                     version = versions.get(item.key());
@@ -171,7 +173,7 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
                     }
                     if (model == null || rerender) {
                         boolean keepCapsule = model != null && rendering.limit() > 0 && !label.isEmpty()
-                                && !changedAppearance && label.equals(captions.get(item.key()))
+                                && !placementChanged && !changedAppearance && label.equals(captions.get(item.key()))
                                 && sameResourceIcon((StatusBarNotification) Reflect.get(source, model), render);
                         model = updateModel(model, render, template, entry, keepCapsule);
                         models.put(item.key(), model);
@@ -197,6 +199,10 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
                         feature.failure("Native notification reminder unavailable", failure);
                     }
                 }
+                updatePlacement(model, false, lockCards);
+                if (showShade && panelModel != null) updatePlacement(panelModel, true, lockCards);
+                if (lockCards && (placementChanged || panelModel == null))
+                    for (var member : group) feature.store.failed(member.key());
                 next.add(model); removed.remove(model); nextVersions.put(item.key(), version);
                 if (showShade && panelModel != null) { shadeNext.add(panelModel); removedFromShade.remove(panelModel); }
                 coverage.put(item.key(), group); for (var member : group) representatives.put(member.key(), item.key());
@@ -213,10 +219,11 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
         waitingForTouch.retainAll(nextVersions.keySet());
         shadeModels.values().removeAll(removedFromShade);
         versions.clear(); versions.putAll(nextVersions);
-        if (listChanged || reminderChanged) Reflect.call(changed, listener, next);
+        if (placementChanged || listChanged || reminderChanged) Reflect.call(changed, listener, next);
         if (shadeDismissal != null) shadeDismissal.publish(shadeModels, coverage);
-        if (shadeListener != null && (!previousShade.equals(List.copyOf(shadeModels.keySet())) || shadeShown != showShade))
+        if (shadeListener != null && (!previousShade.equals(List.copyOf(shadeModels.keySet())) || shadeShown != showShade || placementChanged))
             Reflect.call(changed, shadeListener, shadeNext);
+        lockedPlacement = lockCards;
         shadeShown = showShade;
         grouped = rules.groupApps();
         removed.addAll(removedFromShade);
@@ -225,7 +232,7 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
             try { Reflect.call(Reflect.method(obsolete.getClass(), "x", void.class), obsolete); }
             catch (ReflectiveOperationException | RuntimeException unavailable) { feature.module.info("Notification template cleanup deferred to native renderer"); }
         }
-        if (listChanged) {
+        if (listChanged || placementChanged) {
             cancelReadiness();
             readinessChecksLeft = 24;
         }
@@ -239,7 +246,6 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
         if (model == null) {
             model = modelConstructor.newInstance(sbn, template, placement);
             Reflect.call(prepare, model);
-            if (placement == shadeEntry) allowNotificationCenter(model);
         } else {
             source.set(model, sbn); ui.set(model, template);
             // The source's identity and placement are unchanged. Preparing again resets
@@ -259,15 +265,10 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
                 && after.getType() == Icon.TYPE_RESOURCE && before.getResId() == after.getResId()
                 && java.util.Objects.equals(before.getResPackage(), after.getResPackage());
     }
-    private void allowNotificationCenter(Object model) throws IllegalAccessException {
-        // The generic OEM model defaults to status bar only without its per-model host map.
-        try {
-            var placement = new org.json.JSONObject();
-            placement.put("showHostMap", new org.json.JSONArray().put(16));
-            placementMetadata.set(model, placement);
-        } catch (org.json.JSONException impossible) {
-            throw new IllegalStateException("Cannot declare the native notification-center entry", impossible);
-        }
+    private void updatePlacement(Object model, boolean shade, boolean lockCards) throws IllegalAccessException {
+        var current = (org.json.JSONObject) placementMetadata.get(model);
+        var updated = NotificationLockscreenCards.placement(current, shade, lockCards);
+        if (updated != current) placementMetadata.set(model, updated);
     }
     private static void installShadeLaunchObserver(NotificationCloudFeature feature, ClassLoader loader)
             throws ReflectiveOperationException {
@@ -334,7 +335,9 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
             var members = coverage.get(item.getKey());
             if (members == null || members.stream().allMatch(member -> feature.store.ready(member.key()))) continue;
             List<?> ready = (List<?>) Reflect.call(wrappers, item.getValue());
-            if (ready.size() >= 2) for (var member : members) changed |= feature.ready(member.key(), member.revision());
+            Object panel = shadeModels.get(item.getKey());
+            boolean lockRowReady = !lockedPlacement || panel != null && !((List<?>) Reflect.call(wrappers, panel)).isEmpty();
+            if (ready.size() >= 2 && lockRowReady) for (var member : members) changed |= feature.ready(member.key(), member.revision());
             else waiting = true;
         }
         if (changed) feature.readinessChanged();

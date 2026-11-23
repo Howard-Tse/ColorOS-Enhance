@@ -21,6 +21,32 @@ import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class) @Config(sdk=36)
 public class NativeCameraCardTest {
+    @Test public void updatedFirstBodyRestoresOnlyItsLostInsetBeforeDrawing() throws Exception {
+        var context = Robolectric.buildActivity(Activity.class).setup().get();
+        var root = new Root(context);
+        root.h.set(460,25,540,115);
+        var list = new Container(context);
+        root.addView(list);
+        var first = card(context, 4, 350);
+        var second = card(context, 0, 300);
+        list.addView(first);
+        list.addView(second);
+        var cards = contract(false);
+        list.setTranslationY(200);
+        cards.afterNativeLayout(list, true);
+        first.measure(View.MeasureSpec.makeMeasureSpec(1000,View.MeasureSpec.EXACTLY), View.MeasureSpec.UNSPECIFIED);
+        first.layout(0, 14, 1000, 14 + first.getMeasuredHeight());
+        int top = first.i.getTop();
+        assertTrue(top > 4);
+        first.i.offsetTopAndBottom(4 - top);
+        first.i.setTranslationY(3f);
+        cards.beforeDraw(first, true);
+        assertEquals(top, first.i.getTop());
+        assertEquals(3f, first.i.getTranslationY(), 0f);
+        cards.beforeDraw(first, true);
+        assertEquals(top, first.i.getTop());
+        assertEquals(0, cards.cameraContentInset(second));
+    }
     @Test @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
     public void reopeningTheSameLegacyCardReadsTheCurrentRadiusAndCurve() throws Exception {
         var context = Robolectric.buildActivity(Activity.class).setup().get();

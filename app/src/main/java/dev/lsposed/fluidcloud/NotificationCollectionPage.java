@@ -35,11 +35,16 @@ final class NotificationCollectionPage {
     private ImageView returnButton, settingsAnchor;
     private View settingsHeader;
     private boolean stylingReturnButton, projected;
+    private float buttonReveal;
     private int savedScroll;
     private final ViewTreeObserver.OnPreDrawListener updateControls = this::updateControls;
     private OnBackInvokedDispatcher dispatcher;
     private Set<String> keys = Set.of(), groups = Set.of();
     private Swap swap;
+    private final NotificationGroupNavigation navigation;
+    private NotificationCloudGrouping.Identity groupIdentity;
+    private boolean focusOnly;
+    private Set<String> targetKeys = Set.of();
 
     NotificationCollectionPage(NotificationCloudFeature feature, ClassLoader loader) throws ReflectiveOperationException {
         this.feature = feature;
@@ -62,6 +67,13 @@ final class NotificationCollectionPage {
         Class<?> row = Reflect.type(loader, "com.android.systemui.statusbar.notification.row.ExpandableNotificationRow");
         Class<?> entry = Reflect.type(loader, "com.android.systemui.statusbar.notification.collection.NotificationEntry");
         Method rowEntry = Reflect.method(row, "getEntry", entry);
+        NotificationGroupNavigation navigator;
+        try { navigator = new NotificationGroupNavigation(feature, this, row, rowEntry, stackType); }
+        catch (ReflectiveOperationException unavailable) {
+            feature.failure("Native notification group navigation unavailable", unavailable);
+            navigator = null;
+        }
+        navigation = navigator;
         Class<?> window = Reflect.type(loader, "com.android.systemui.shade.NotificationShadeWindowControllerImpl");
         Method visible = Reflect.method(window, "setPanelVisible", void.class, boolean.class);
         new NotificationScopedClear(feature, loader, stackType, row, rowEntry);
@@ -88,13 +100,27 @@ final class NotificationCollectionPage {
         if (showing() || !shadeType.isInstance(anchor.getRootView()) || !stackType.isInstance(list)) return;
         shade = (FrameLayout) anchor.getRootView();
         stack = list;
-        open();
+        if (navigation != null) navigation.cancel();
+        open(null);
     }
 
-    private boolean open() {
+    boolean canNavigateGroups() { return navigation != null; }
+
+    void requestGroup(ViewGroup list, NotificationCloudGrouping.Identity identity) {
+        if (navigation == null || showing() || !stackType.isInstance(list)
+                || !shadeType.isInstance(list.getRootView())) return;
+        shade = (FrameLayout) list.getRootView();
+        stack = list;
+        navigation.start(list, identity);
+    }
+
+    Set<String> displayedKeys() { return Set.copyOf(keys); }
+    Set<String> targetKeys() { return targetKeys; }
+    boolean readyToFocus() { return projected && swap == null; }
+
+    boolean open(NotificationCloudGrouping.Identity identity) {
         if (showing() || shade == null || stack == null || stack.getRootView() != shade || !stack.isShown()
                 || !feature.enabled() || !feature.unlocked()) return false;
-        if (!updateMembership()) return false;
         try {
             var anchor = findSettingsButton(shade);
             if (anchor == null) return false;
@@ -106,7 +132,14 @@ final class NotificationCollectionPage {
             int arrow = context.getResources().getIdentifier("ic_chevron_left", "drawable", "com.android.systemui");
             if (arrow == 0) arrow = context.getResources().getIdentifier("coui_back_arrow", "drawable", "com.android.systemui");
             if (arrow == 0) return false;
-            var button = new ImageView(context);
+            groupIdentity = identity;
+            if (identity != null) {
+                targetKeys = members(identity);
+                focusOnly = !NotificationCloudGrouping.hasMatchingSummary(feature.liveNotifications(), targetKeys,
+                        Set.copyOf(feature.collectedKeys()));
+            } else focusOnly = false;
+            if (!updateMembership()) return false;
+            var button = createReturnButton(anchor);
             button.setImageDrawable(context.getDrawable(arrow));
             button.setImageTintList(anchor.getImageTintList());
             button.setScaleType(anchor.getScaleType());
@@ -117,6 +150,7 @@ final class NotificationCollectionPage {
             settingsHeader = header;
             settingsAnchor = anchor;
             returnButton = button;
+            buttonReveal = 0f;
             int[] anchorPosition = positionInShade(anchor);
             var params = new FrameLayout.LayoutParams(anchor.getWidth(), anchor.getHeight(),
                     android.view.Gravity.TOP | android.view.Gravity.LEFT);
@@ -129,7 +163,7 @@ final class NotificationCollectionPage {
             shade.getViewTreeObserver().addOnPreDrawListener(updateControls);
             dispatcher = shade.findOnBackInvokedDispatcher();
             if (dispatcher != null) dispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_OVERLAY, back);
-            beginSwap(0, () -> {
+            beginSwap(false, 0, () -> {
                 projected = true;
                 feature.collectionChanged();
             });
@@ -150,8 +184,20 @@ final class NotificationCollectionPage {
                 && groups.contains(notification.getGroupKey()));
     }
 
+    private Set<String> members(NotificationCloudGrouping.Identity identity) {
+        Set<String> members = new HashSet<>();
+        if (feature.rules().groupApps()) for (var item : feature.store.entries()) {
+            if (item.ready() && identity.equals(NotificationCloudGrouping.identity(item.value()))) members.add(item.key());
+        }
+        return members;
+    }
+
     private boolean updateMembership() {
-        Set<String> next = new HashSet<>(feature.collectedKeys());
+        if (groupIdentity != null) {
+            targetKeys = members(groupIdentity);
+            if (targetKeys.isEmpty()) return false;
+        }
+        Set<String> next = focusOnly ? targetKeys : new HashSet<>(feature.collectedKeys());
         Set<String> nextGroups = new HashSet<>();
         for (String key : next) {
             var item = feature.store.get(key);
@@ -172,8 +218,9 @@ final class NotificationCollectionPage {
     void close() { exit(false); }
 
     private void exit(boolean animate) {
-        if (animate && projected && showing()) {
-            if (swap == null || !swap.leaving) beginSwap(savedScroll, this::restoreMainList);
+        if (navigation != null) navigation.cancel();
+        if (animate && showing()) {
+            if (swap == null || !swap.leaving) beginSwap(true, savedScroll, this::restoreMainList);
             return;
         }
         if (swap != null) swap.finish();
@@ -181,6 +228,7 @@ final class NotificationCollectionPage {
     }
 
     private void restoreMainList() {
+        if (navigation != null) navigation.restoreGroups();
         projected = false;
         if (dispatcher != null) dispatcher.unregisterOnBackInvokedCallback(back);
         dispatcher = null;
@@ -199,17 +247,21 @@ final class NotificationCollectionPage {
         settingsHeader = null;
         keys = Set.of();
         groups = Set.of();
+        targetKeys = Set.of();
+        groupIdentity = null;
+        focusOnly = false;
         feature.collectionChanged();
     }
 
     void rendered() {
         if (swap != null) swap.rendered();
+        if (projected && navigation != null) navigation.rendered();
     }
 
-    private void beginSwap(int targetScroll, Runnable project) {
+    private void beginSwap(boolean leaving, int targetScroll, Runnable project) {
         float visibleAlpha = stack.getTransitionAlpha();
         if (swap != null) swap.finish();
-        swap = new Swap(targetScroll, project);
+        swap = new Swap(leaving, targetScroll, project);
         swap.start(visibleAlpha);
     }
 
@@ -219,13 +271,14 @@ final class NotificationCollectionPage {
         private final int targetScroll;
         private final Runnable project;
         private final float listAlpha = list.getTransitionAlpha();
-        private final boolean leaving = projected;
+        private final boolean leaving;
         private ValueAnimator animator;
         private ViewTreeObserver.OnPreDrawListener preDraw;
         private boolean waiting, pausedStockAnimation;
         private final Runnable timeout = this::rendered;
 
-        Swap(int targetScroll, Runnable project) {
+        Swap(boolean leaving, int targetScroll, Runnable project) {
+            this.leaving = leaving;
             this.targetScroll = targetScroll;
             this.project = project;
         }
@@ -237,6 +290,7 @@ final class NotificationCollectionPage {
 
         private void switchList() {
             if (swap != this) return;
+            buttonReveal = leaving ? 0f : 1f;
             if (ValueAnimator.areAnimatorsEnabled()) list.setTransitionAlpha(0f);
             pausedStockAnimation = Boolean.TRUE.equals(Reflect.get(stackAnimations, list));
             if (pausedStockAnimation) Reflect.call(setStackAnimations, list, false);
@@ -267,7 +321,12 @@ final class NotificationCollectionPage {
             animator = ValueAnimator.ofFloat(from, to);
             animator.setDuration(duration);
             animator.setInterpolator(new android.view.animation.PathInterpolator(.25f, .1f, .25f, 1f));
-            animator.addUpdateListener(value -> list.setTransitionAlpha((float) value.getAnimatedValue()));
+            float initialReveal = buttonReveal;
+            float targetReveal = leaving ? 0f : 1f;
+            animator.addUpdateListener(value -> {
+                list.setTransitionAlpha((float) value.getAnimatedValue());
+                buttonReveal = initialReveal + (targetReveal - initialReveal) * value.getAnimatedFraction();
+            });
             animator.addListener(new android.animation.AnimatorListenerAdapter() {
                 @Override public void onAnimationEnd(android.animation.Animator animation) {
                     if (animator != animation || swap != Swap.this) return;
@@ -294,7 +353,10 @@ final class NotificationCollectionPage {
             }
             list.setTransitionAlpha(listAlpha);
             resumeStockAnimation();
-            if (swap == this) swap = null;
+            if (swap == this) {
+                swap = null;
+                if (!leaving && projected && navigation != null) navigation.rendered();
+            }
         }
 
         private void unregister() {
@@ -324,6 +386,36 @@ final class NotificationCollectionPage {
             if (found != null) return found;
         }
         return null;
+    }
+
+    private ImageView createReturnButton(ImageView anchor) {
+        Context context = anchor.getContext();
+        try {
+            ClassLoader loader = headerType.getClassLoader();
+            Class<?> type = Reflect.type(loader, "com.oplus.systemui.qs.OplusQsFooterSettingsSpotLightImageView");
+            Class<?> delegate = Reflect.type(loader, "com.oplus.systemui.notification.material.NotificationSpotLightDelegate");
+            Method touch = Reflect.method(delegate, "onTouchEvent", void.class, View.class, android.view.MotionEvent.class);
+            ImageView button = (ImageView) type.getConstructor(Context.class).newInstance(context);
+            // The stock panel touch bridge only targets the settings button's resource ID.
+            button.setOnTouchListener((view, event) -> {
+                // Register this pointer on DOWN. The shade forwards later events to the registered host.
+                if (event.getActionMasked() == android.view.MotionEvent.ACTION_DOWN)
+                    Reflect.call(touch, null, view, event);
+                return false;
+            });
+            return button;
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+            ImageView button = new ImageView(context);
+            var mask = new android.graphics.drawable.GradientDrawable();
+            mask.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+            mask.setColor(android.graphics.Color.WHITE);
+            var color = new android.util.TypedValue();
+            boolean resolved = context.getTheme().resolveAttribute(android.R.attr.colorControlHighlight, color, true);
+            button.setForeground(new android.graphics.drawable.RippleDrawable(
+                    resolved && color.resourceId != 0 ? context.getColorStateList(color.resourceId)
+                            : android.content.res.ColorStateList.valueOf(resolved ? color.data : 0x33ffffff), null, mask));
+            return button;
+        }
     }
 
     private void styleReturnButton() {
@@ -365,9 +457,9 @@ final class NotificationCollectionPage {
             if (view.getVisibility() != View.VISIBLE) { alpha = 0f; break; }
             alpha *= view.getAlpha() * view.getTransitionAlpha();
         }
-        if (!projected) alpha = 0f;
+        alpha *= buttonReveal;
         returnButton.setAlpha(alpha);
-        returnButton.setEnabled(alpha > 0f && settingsAnchor.isClickable());
+        returnButton.setEnabled(alpha > 0f && settingsAnchor.isClickable() && (swap == null || !swap.leaving));
         return true;
     }
     private int dp(int value) { return Math.round(value * shade.getResources().getDisplayMetrics().density); }

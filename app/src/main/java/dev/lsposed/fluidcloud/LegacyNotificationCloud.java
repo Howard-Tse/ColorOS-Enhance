@@ -37,6 +37,7 @@ final class LegacyNotificationCloud implements NotificationCloudRenderer {
     private final Runnable poll = this::poll;
     private int remainingPolls;
     private NotificationCloudRules previousRules;
+    private boolean lockedPlacement;
     private final Field cardOwner;
     private final Method viewItem;
     private final Field viewKey;
@@ -189,13 +190,16 @@ final class LegacyNotificationCloud implements NotificationCloudRenderer {
             NotificationCloudRules rules, Set<String> autoExpand) {
         var next = new LinkedHashMap<String, Projection>();
         var retired = new ArrayList<Object>();
-        boolean listChanged = false, shadeChanged = false;
+        boolean lockCards = !feature.unlocked() && rules.retainOnLock() && rules.lockCards();
+        boolean showShade = feature.unlocked() ? rules.shadeCards() : lockCards;
+        boolean listChanged = lockCards != lockedPlacement, shadeChanged = listChanged;
         for (var group : NotificationCloudGrouping.groups(notifications, rules.groupApps())) {
             String key = group.getFirst().key();
             Projection previous = projections.get(key);
             var version = NotificationCloudGrouping.renderVersion(group);
             boolean popup = autoExpand.contains(group.getLast().key());
-            if (previous != null && version.equals(previous.version()) && rules.equals(previousRules) && !popup) {
+            if (lockedPlacement == lockCards && previous != null && version.equals(previous.version()) && rules.equals(previousRules)
+                    && showShade == (previous.shade() != null) && !popup) {
                 next.put(key, new Projection(previous.capsule(), previous.shade(), version, group));
                 continue;
             }
@@ -204,14 +208,14 @@ final class LegacyNotificationCloud implements NotificationCloudRenderer {
                 Object capsule = previous == null ? null : previous.capsule();
                 Object shade = previous == null ? null : previous.shade();
                 listChanged |= capsule == null || popup;
-                shadeChanged |= rules.shadeCards() != (shade != null);
+                shadeChanged |= showShade != (shade != null);
                 boolean clearable = group.stream().allMatch(item -> item.value().isClearable());
-                capsule = updateModel(capsule, render, statusEntry, popup, clearable, rules);
-                if (rules.shadeCards()) shade = updateModel(shade, render, shadeEntry, false, clearable, rules);
+                capsule = updateModel(capsule, render, statusEntry, popup, clearable, rules, lockCards);
+                if (showShade) shade = updateModel(shade, render, shadeEntry, false, clearable, rules, lockCards);
                 else if (shade != null) { retired.add(shade); shade = null; }
                 // A previously prepared capsule alone does not justify hiding this
                 // notification when its newly requested shade projection is still pending.
-                if (rules.shadeCards() && (previous == null || previous.shade() == null))
+                if (showShade && (previous == null || previous.shade() == null))
                     for (var original : group) feature.store.failed(original.key());
                 next.put(key, new Projection(capsule, shade, version, group));
             } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
@@ -228,8 +232,9 @@ final class LegacyNotificationCloud implements NotificationCloudRenderer {
         listChanged |= !List.copyOf(next.keySet()).equals(List.copyOf(projections.keySet()));
         projections = next;
         previousRules = rules;
+        lockedPlacement = lockCards;
         if (listChanged) Reflect.call(changed, statusListener, next.values().stream().map(Projection::capsule).toList());
-        if (shadeChanged || listChanged && rules.shadeCards())
+        if (shadeChanged || listChanged && showShade)
             Reflect.call(changed, shadeListener, next.values().stream().map(Projection::shade).filter(v -> v != null).toList());
         for (Object obsolete : retired) try { Reflect.call(destroy, obsolete); }
         catch (RuntimeException | LinkageError failure) {
@@ -243,11 +248,11 @@ final class LegacyNotificationCloud implements NotificationCloudRenderer {
     }
 
     private Object updateModel(Object existing, StatusBarNotification sourceNotification, Object entry, boolean popup,
-            boolean clearable, NotificationCloudRules rules)
+            boolean clearable, NotificationCloudRules rules, boolean lockCards)
             throws ReflectiveOperationException {
         StatusBarNotification render = sourceNotification.clone();
         var extras = render.getNotification().extras;
-        extras.putString("oplusLiveAlertOptions", metadata(popup, clearable).toString());
+        extras.putString("oplusLiveAlertOptions", NotificationLockscreenCards.placement(metadata(popup, clearable), entry == shadeEntry, lockCards).toString());
         if (entry == statusEntry) {
             String caption = NativeNotificationCapsule.captionText(render, host, rules);
             if (caption.length() > 512) caption = caption.substring(0, caption.offsetByCodePoints(0, 256));

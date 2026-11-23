@@ -5,6 +5,7 @@ import java.util.List;
 /** Shared native/Compose setting rows. The serialized policy is one atomic preference. */
 public final class NotificationSettingsOptions {
     public record Option(String section, String key, String title, String summary, List<String> labels, List<String> values) {
+        public boolean available(NotificationCloudRules rules) { return !key.equals("lockCards") || rules.retainOnLock(); }
         public boolean toggle() { return values.isEmpty(); }
         public int selection(NotificationCloudRules rules) { return toggle() ? Boolean.TRUE.equals(value(rules, key)) ? 1 : 0 : Math.max(0, values.indexOf(value(rules, key).toString())); }
         public String description(NotificationCloudRules rules) { return toggle() ? summary : labels.get(selection(rules)); }
@@ -28,9 +29,11 @@ public final class NotificationSettingsOptions {
             choice("原通知处理", "original", "转换成功后的原通知", "保留原通知", "收纳到“已转为流体云”", "隐藏显示，保留系统记录"),
             flag("原通知处理", "keepAlerts", "保留通知响铃和震动", "开启时跟随系统渠道及勿扰设置。关闭仅影响参与转换的系统通知提醒。关闭后首次加载需要系统框架作用域和重启手机。"),
             flag("原通知处理", "shadeCards", "在通知中心显示流体云卡片", "为通知中心额外构建和更新一份卡片，频繁更新时会增加 SystemUI 负载。原通知仍按上面的方式处理。"),
+            flag("原通知处理", "retainOnLock", "锁屏时保留通知转流体云", "锁屏时继续转换系统允许完整显示的通知，并沿用原通知的收纳或隐藏设置。关闭后，锁屏时恢复原通知。"),
+            flag("原通知处理", "lockCards", "锁屏时显示通知流体云卡片", "原通知可在锁屏完整展示时，卡片会保留在锁屏通知列表，直到被清除或原通知结束。"),
             choice("胶囊外观", "capsuleText", "胶囊右侧内容", "通知内容", "应用名称"),
             choice("卡片与交互", "style", "卡片样式", "自动适配", "玻璃卡片", "紧凑消息", "进度卡片（有进度时）"),
-            flag("卡片与交互", "groupApps", "合并同类通知", "按应用／会话收纳，展开后可查看组内每条通知及原始操作。"),
+            flag("卡片与交互", "groupApps", "合并同类通知", "按应用或会话合并。长按卡片选择「查看本组」可在通知中心展开原通知。"),
             flag("卡片与交互", "directOpen", "点击胶囊直接打开通知", "关闭时点击展开卡片；开启时直接打开原始通知目标。"),
             flag("卡片与交互", "floating", "默认在卡片显示浮窗按钮", "设备与通知目标支持时，在卡片上显示「浮窗打开」，可按应用覆盖。支持浮窗的通知也可通过长按菜单打开。"),
             choice("卡片与交互", "afterOpen", "打开通知后清除", "不清除", "仅清除流体云卡片", "清除原通知和卡片"));
@@ -40,6 +43,7 @@ public final class NotificationSettingsOptions {
             case "groupApps" -> r.groupApps(); case "directOpen" -> r.directOpen(); case "floating" -> r.floating();
             case "capsuleText" -> r.capsuleText(); case "afterOpen" -> r.afterOpen(); case "keepAlerts" -> r.keepAlerts();
             case "shadeCards" -> r.shadeCards();
+            case "retainOnLock" -> r.retainOnLock(); case "lockCards" -> r.lockCards();
             default -> throw new IllegalArgumentException(key); };
     }
     private NotificationSettingsOptions() { }

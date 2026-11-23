@@ -47,6 +47,37 @@ public class NotificationCloudGroupingTest {
                 NotificationCloudGrouping.renderVersion(List.of(updated(latest))));
     }
 
+    private static StatusBarNotification grouped(int id, String group, boolean summary) {
+        var context = RuntimeEnvironment.getApplication();
+        var notification = new Notification.Builder(context, "test").setSmallIcon(android.R.drawable.stat_notify_more)
+                .setGroup(group).setGroupSummary(summary).build();
+        return new StatusBarNotification("source", "source", id, null, 12345, 0, 0, notification,
+                android.os.Process.myUserHandle(), id);
+    }
+
+    @Test public void navigateToMatchingNativeSummaryEvenWithOtherGroupsPresent() {
+        var summary = grouped(1, "group", true);
+        var a = grouped(2, "group", false);
+        var b = grouped(3, "group", false);
+        var unrelated = grouped(4, "other", false);
+        var selected = java.util.Set.of(a.getKey(), b.getKey());
+        assertTrue(NotificationCloudGrouping.hasMatchingSummary(List.of(summary, a, unrelated, b), selected,
+                java.util.Set.of(a.getKey(), b.getKey(), unrelated.getKey())));
+    }
+
+    @Test public void focusCloudMembersWhenNativeGroupIncludesAnotherConversationOrHasNoSummary() {
+        var summary = grouped(1, "group", true);
+        var a = grouped(2, "group", false);
+        var b = grouped(3, "group", false);
+        var other = grouped(4, "group", false);
+        var selected = java.util.Set.of(a.getKey(), b.getKey());
+        assertFalse(NotificationCloudGrouping.hasMatchingSummary(List.of(summary, a, b, other), selected,
+                java.util.Set.of(a.getKey(), b.getKey(), other.getKey())));
+        assertFalse(NotificationCloudGrouping.hasMatchingSummary(List.of(a, b), selected, selected));
+        assertFalse(NotificationCloudGrouping.hasMatchingSummary(List.of(summary, a, b), selected, java.util.Set.of()));
+        assertFalse(NotificationCloudGrouping.hasMatchingSummary(List.of(summary, b), selected, selected));
+    }
+
     private static NotificationCloudStore.Entry<StatusBarNotification> updated(NotificationCloudStore.Entry<StatusBarNotification> prior) {
         return new NotificationCloudStore.Entry<>(prior.key(), prior.app(), prior.channel(), prior.value(), prior.revision() + 10, prior.ready());
     }

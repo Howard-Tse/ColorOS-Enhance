@@ -32,6 +32,8 @@ final class NativeCameraCard {
     private final Class<?> blurBackgroundType;
     private final Method blurAlpha;
     private final java.util.function.BiFunction<ViewGroup, Float, Plan> geometryOverride;
+    private final WeakHashMap<ViewGroup, Rect> testedAnchors = new WeakHashMap<>();
+    private final WeakHashMap<ViewGroup, Rect> openAnchors = new WeakHashMap<>();
     private final WeakHashMap<ViewGroup, Position> positions = new WeakHashMap<>();
     private final WeakHashMap<View, Margin> margins = new WeakHashMap<>();
     private final WeakHashMap<View, Backdrop> backgrounds = new WeakHashMap<>();
@@ -53,7 +55,7 @@ final class NativeCameraCard {
     private final WeakHashMap<View, Elevation> elevations = new WeakHashMap<>();
     private final java.util.Set<View> mutedBlur = java.util.Collections.newSetFromMap(new WeakHashMap<>());
     private boolean aligning;
-    private record Position(float nativeY, float appliedY, int inset) { }
+    private record Position(float nativeY, float appliedY, int inset, boolean enabled) { }
     private record Margin(int nativeTop, int appliedTop) { }
     private record Clip(boolean children, boolean padding, boolean outline, boolean ownsOutline) { }
     private record Backdrop(Rect nativeBounds, Rect appliedBounds, boolean fillsParent) { }
@@ -165,18 +167,28 @@ final class NativeCameraCard {
         int statusId = resources.getIdentifier("status_bar_height", "dimen", "android");
         if (dividerId == 0 || statusId == 0) return null;
         KeyguardManager keyguard = container.getContext().getSystemService(KeyguardManager.class);
-        return plan((Rect) Reflect.get(capsuleRect, root), cutout == null ? null : cutout.getBoundingRectTop(),
+        Rect current = (Rect) Reflect.get(capsuleRect, root);
+        if (dividerOverride < 0) testedAnchors.computeIfAbsent(container, unused -> new Rect()).set(current);
+        Rect anchor = dividerOverride < 0 && current.isEmpty() ? openAnchors.get(container) : current;
+        Plan result = plan(anchor, cutout == null ? null : cutout.getBoundingRectTop(),
                 resources.getDisplayMetrics().widthPixels, resources.getDimensionPixelSize(statusId),
                 nativeY, dividerOverride < 0 ? resources.getDimensionPixelSize(dividerId) : dividerOverride,
                 resources.getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT,
                 keyguard != null && !keyguard.isKeyguardLocked());
+        if (dividerOverride < 0) {
+            if (result != null && !current.isEmpty() && !current.equals(openAnchors.get(container)))
+                openAnchors.put(container, new Rect(current));
+            else if (result == null) openAnchors.remove(container);
+        }
+        return result;
     }
     void afterNativeLayout(ViewGroup container, boolean enabled) {
         // The original method has just written a fresh OEM value; never subtract twice.
         float nativeY = container.getTranslationY();
         Plan plan = enabled ? geometry(container, nativeY) : null;
         positions.put(container, new Position(nativeY, plan == null ? nativeY : plan.translationY(),
-                plan == null ? 0 : plan.inset()));
+                plan == null ? 0 : plan.inset(), enabled));
+        if (!enabled) openAnchors.remove(container);
         if (plan != null) container.setTranslationY(plan.translationY());
         updateChildren(container, enabled);
         if (!ownershipChecks.containsKey(container)) {
@@ -195,6 +207,20 @@ final class NativeCameraCard {
     private boolean reconcileOrder(ViewGroup container) {
         Position position = positions.get(container);
         if (position == null) return true;
+        // A rebind can populate the capsule rect after this container's layout.
+        // Re-evaluate once the anchor is available, even when no new measure was requested.
+        if (position.enabled() && position.inset() == 0 && !openAnchors.containsKey(container)) {
+            ViewGroup root = root(container);
+            Rect anchor = root == null ? null : (Rect) Reflect.get(capsuleRect, root);
+            if (anchor != null && !anchor.isEmpty() && !anchor.equals(testedAnchors.get(container))) {
+                Plan recovered = geometry(container, position.nativeY());
+                if (recovered != null) {
+                    position = new Position(position.nativeY(), recovered.translationY(), recovered.inset(), true);
+                    positions.put(container, position);
+                    container.setTranslationY(position.appliedY());
+                }
+            }
+        }
         boolean changed = false;
         for (int i = 0; i < container.getChildCount(); i++) {
             View card = container.getChildAt(i);
@@ -235,7 +261,7 @@ final class NativeCameraCard {
         if (position != null) {
             Plan plan = enabled ? geometry(container, position.nativeY()) : null;
             position = new Position(position.nativeY(), plan == null ? position.nativeY() : plan.translationY(),
-                    plan == null ? 0 : plan.inset());
+                    plan == null ? 0 : plan.inset(), enabled);
             positions.put(container, position);
             if (container.getTranslationY() != position.appliedY()) container.setTranslationY(position.appliedY());
         }
@@ -296,8 +322,8 @@ final class NativeCameraCard {
         if (!enabled || !cardType.isInstance(card) || !containerType.isInstance(card.getParent())) return null;
         ViewGroup container = (ViewGroup) card.getParent(); Position position = positions.get(container);
         if (position == null || position.inset() <= 0 || itemPosition(container, card) != 0) return null;
-        ViewGroup root = root(container);
-        return root == null ? null : new Rect((Rect) Reflect.get(capsuleRect, root));
+        Rect current = cameraAnchor(container);
+        return current != null && !current.isEmpty() ? current : openAnchors.get(container);
     }
     private Morph morphFor(View card, Rect mask, boolean enabled) {
         Rect camera = cameraFor(card, enabled);
@@ -511,7 +537,9 @@ final class NativeCameraCard {
             removeHeader(card);
             return;
         }
-        ArrayList<View> layers = new ArrayList<>();findDecorativeBackgrounds(child, child, layers);
+        reconcileBodyFrame(card, child);
+        ArrayList<View> layers = new ArrayList<>();
+        findDecorativeBackgrounds(child, child, layers);
         for (View background : layers) {
             extendBackground(card, background, inset);
             decorateLayer(background, card, 0, true);
@@ -520,6 +548,18 @@ final class NativeCameraCard {
         syncMaterials((ViewGroup) card, child);
         syncForeground(card);
         ensureHeader((ViewGroup) card);
+    }
+    private void reconcileBodyFrame(View card, View child) {
+        Margin margin = margins.get(child);
+        if (margin == null || child.getParent() != card || !child.isLaidOut()
+                || !(child.getLayoutParams() instanceof FrameLayout.LayoutParams params)
+                || params.topMargin != margin.appliedTop()) return;
+        int gravity = params.gravity < 0 ? android.view.Gravity.TOP : params.gravity & android.view.Gravity.VERTICAL_GRAVITY_MASK;
+        if (gravity != android.view.Gravity.TOP && gravity != 0) return;
+        // The SDK can lay the same view out at its unpadded origin after the
+        // parent layout. Restore only our inset, preserving translation and size.
+        if (child.getTop() == card.getPaddingTop() + margin.nativeTop())
+            child.offsetTopAndBottom(margin.appliedTop() - margin.nativeTop());
     }
     boolean handles(View card) {
         if (cardType.isInstance(card)) return true;
@@ -908,6 +948,8 @@ final class NativeCameraCard {
     void detached(ViewGroup container) {
         var check = ownershipChecks.remove(container);
         if (check != null && container.getViewTreeObserver().isAlive()) container.getViewTreeObserver().removeOnPreDrawListener(check);
+        testedAnchors.remove(container);
+        openAnchors.remove(container);
         Position previous = positions.remove(container);
         if (previous != null && container.getTranslationY() == previous.appliedY())
             container.setTranslationY(previous.nativeY());

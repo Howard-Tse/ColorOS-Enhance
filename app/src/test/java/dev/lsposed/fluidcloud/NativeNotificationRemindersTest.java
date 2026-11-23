@@ -60,6 +60,24 @@ public class NativeNotificationRemindersTest {
         assertTrue(popup.getJSONObject("extensibleActionMap").getBoolean("isDismissible"));
     }
 
+    @Test public void lockHostGrantIsPerProjectionAndCanBeWithdrawnInPlace() throws Exception {
+        assertNull(NotificationLockscreenCards.placement(null, false, false));
+        JSONObject existing = new JSONObject().put("remindType", 11);
+        existing.put("lockScreenShowHostMap", new org.json.JSONArray().put(8));
+        assertNull(NotificationLockscreenCards.placement(null, false, true));
+        assertSame(existing, NotificationLockscreenCards.placement(existing, false, true));
+        assertFalse(existing.has("lockScreenShowHostMap"));
+        assertFalse(existing.has("showHostMap"));
+        JSONObject shade = NotificationLockscreenCards.placement(null, true, true);
+        assertEquals(16, shade.getJSONArray("lockScreenShowHostMap").getInt(0));
+        NotificationLockscreenCards.placement(shade, true, false);
+        NotificationLockscreenCards.placement(existing, false, false);
+        assertFalse(shade.has("lockScreenShowHostMap"));
+        assertEquals(16, shade.getJSONArray("showHostMap").getInt(0));
+        assertFalse(existing.has("lockScreenShowHostMap"));
+        assertEquals(11, existing.getInt("remindType"));
+    }
+
     private static NativeNotificationReminders adapter() throws Exception {
         return new NativeNotificationReminders(NotificationModel.class,
                 Reflect.field(NotificationModel.class, "metadata", JSONObject.class));

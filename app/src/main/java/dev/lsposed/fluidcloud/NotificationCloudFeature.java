@@ -36,10 +36,13 @@ final class NotificationCloudFeature {
     private Context context;
     private NotificationCloudRenderer nativeCloud;
     private NotificationCloudPresentation presentation;
+    private NotificationCapsuleResume capsuleResume;
+    private NotificationLockscreenPolicy lockPolicy;
     private boolean scheduled, active, updatingNative;
     private volatile boolean configured;
     private boolean screenBlocked;
     private boolean unlockedSnapshot;
+    private boolean preparingUnlock;
     private Object observedCollection, collectionObserver;
     private final Set<String> newNotificationKeys = new HashSet<>();
     private NotificationCloudActions actions;
@@ -62,6 +65,10 @@ final class NotificationCloudFeature {
         sbn = Reflect.method(entry, "getSbn", StatusBarNotification.class);
         ranking = Reflect.method(entry, "getRanking", NotificationListenerService.Ranking.class);
         findEntry = Reflect.method(type, "getEntry", entry, String.class);
+        try { lockPolicy = new NotificationLockscreenPolicy(this, loader, entry); }
+        catch (ReflectiveOperationException | RuntimeException | LinkageError missing) {
+            failure("Lockscreen notification privacy adapter unavailable; originals retained on lock", missing);
+        }
         openCleanup = new NotificationOpenCleanup(this, loader, type, entry);
         Class<?> pipeline = Reflect.type(loader, "com.android.systemui.statusbar.notification.collection.NotifPipeline");
         Class<?> observerType = Reflect.type(loader, "com.android.systemui.statusbar.notification.collection.notifcollection.NotifCollectionListener");
@@ -72,6 +79,8 @@ final class NotificationCloudFeature {
             if (event.getName().equals("onEntryRemoved")) {
                 String key = notification(args[0]).getKey();
                 newNotificationKeys.remove(key);
+                if (capsuleResume != null) capsuleResume.removed(key);
+                if (presentation != null) presentation.removed(key);
                 store.remove(key);
             }
             changed();
@@ -93,11 +102,37 @@ final class NotificationCloudFeature {
             Class<?> keyguard = Reflect.type(loader, "com.android.systemui.statusbar.policy.KeyguardStateControllerImpl");
             Method change = Reflect.method(keyguard, "notifyKeyguardState", void.class, boolean.class, boolean.class);
             module.hook(change).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
-                Object result = chain.proceed(); screenBlocked = (boolean) chain.getArg(0);
-                if (screenBlocked) unlockedSnapshot = false;
-                changed(); return result;
+                boolean showing = (boolean) chain.getArg(0);
+                boolean entering = showing && !screenBlocked;
+                if (entering) enterKeyguard();
+                else if (!showing && screenBlocked) prepareUnlock();
+                Object result = chain.proceed();
+                if (!showing && screenBlocked) leaveKeyguard();
+                else if (showing && enabled() && rules.retainOnLock()) lockPolicyChanged();
+                else changed();
+                return result;
             });
+            try {
+                Method goingAway = Reflect.method(keyguard, "notifyKeyguardGoingAway", void.class, boolean.class);
+                module.hook(goingAway).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
+                    if (screenBlocked) {
+                        if (Boolean.TRUE.equals(chain.getArg(0))) prepareUnlock();
+                        else if (preparingUnlock && context != null
+                                && context.getSystemService(KeyguardManager.class).isKeyguardLocked()) cancelUnlock();
+                    }
+                    return chain.proceed();
+                });
+            } catch (NoSuchMethodException olderFirmware) { /* The showing-state callback still prepares the handoff. */ }
         } catch (ReflectiveOperationException unavailable) { module.info("Notification keyguard observer uses protected broadcasts"); }
+        try {
+            Method sleep = Reflect.method(Reflect.type(loader, "com.android.systemui.power.domain.interactor.PowerInteractor"),
+                    "onStartedGoingToSleep", void.class, int.class);
+            module.hook(sleep).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
+                if (capsuleResume != null && enabled() && unlocked() && Looper.myLooper() == Looper.getMainLooper())
+                    capsuleResume.beforeSleep();
+                return chain.proceed();
+            });
+        } catch (ReflectiveOperationException older) { /* The keyguard callback still samples the selection. */ }
         try { presentation = new NotificationCloudPresentation(this, loader, entry); }
         catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
             failure("Notification collection presentation unavailable; original notifications retained", failure);
@@ -153,8 +188,15 @@ final class NotificationCloudFeature {
             });
             BroadcastReceiver receiver = new BroadcastReceiver() {
                 @Override public void onReceive(Context ignored, Intent intent) {
-                    if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) { screenBlocked = true; unlockedSnapshot = false; }
-                    if (Intent.ACTION_USER_PRESENT.equals(intent.getAction())) screenBlocked = false;
+                    if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) enterKeyguard();
+                    else if (Intent.ACTION_USER_PRESENT.equals(intent.getAction())) {
+                        if (screenBlocked) prepareUnlock();
+                        leaveKeyguard();
+                        return;
+                    } else {
+                        if (capsuleResume != null) capsuleResume.reset();
+                        if (presentation != null) presentation.finishUnlock();
+                    }
                     changed();
                 }
             };
@@ -165,10 +207,15 @@ final class NotificationCloudFeature {
         }
         ClassLoader loader = root.getClass().getClassLoader();
         if (nativeCloud == null || nativeCloud.loader() != loader) try {
+            if (capsuleResume != null) { capsuleResume.close(); capsuleResume = null; }
             if (nativeCloud != null) nativeCloud.close();
             Class<?> container = Reflect.type(loader, NativeCapsuleAppearance.VIEWS + "CapsuleContainer");
             nativeCloud = ColorOs16Plugin.capsule(container) ? new LegacyNotificationCloud(this, loader, host)
                     : new NativeNotificationCloud(this, root, host);
+            try { capsuleResume = new NotificationCapsuleResume(this, loader); }
+            catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+                failure("Notification capsule unlock selection unavailable", unavailable);
+            }
             changed();
             module.report(DiagnosticPoint.NOTIFICATION_RENDERER, DiagnosticPoint.State.READY);
             module.info("Notification cloud native source connected");
@@ -177,6 +224,39 @@ final class NotificationCloudFeature {
             module.report(DiagnosticPoint.NOTIFICATION_RENDERER, DiagnosticPoint.State.UNSUPPORTED);
             failure("Notification cloud contract unavailable; original notifications retained", failure);
         }
+        if (capsuleResume != null && (root.getDisplay() == null || root.getDisplay().getDisplayId() == android.view.Display.DEFAULT_DISPLAY))
+            capsuleResume.host(root);
+    }
+    private void enterKeyguard() {
+        if (!screenBlocked && unlocked() && capsuleResume != null) capsuleResume.remember();
+        if (preparingUnlock) cancelUnlock();
+        screenBlocked = true;
+        unlockedSnapshot = false;
+    }
+    private void cancelUnlock() {
+        preparingUnlock = false;
+        if (presentation != null) presentation.finishUnlock();
+        if (capsuleResume != null) capsuleResume.cancelUnlock();
+    }
+    private void prepareUnlock() {
+        if (preparingUnlock || !enabled() || nativeCloud == null || collection == null) return;
+        preparingUnlock = true;
+        if (presentation != null) presentation.startUnlock();
+        if (capsuleResume != null) capsuleResume.startUnlock();
+    }
+    private void leaveKeyguard() {
+        screenBlocked = false;
+        preparingUnlock = false;
+        if (!configured && !active) return;
+        main.removeCallbacks(refreshTask);
+        scheduled = true;
+        main.postAtFrontOfQueue(refreshTask);
+    }
+    void lockPolicyChanged() {
+        if (!screenBlocked || !enabled() || !rules.retainOnLock()) return;
+        main.removeCallbacks(refreshTask);
+        scheduled = true;
+        main.postAtFrontOfQueue(refreshTask);
     }
     void changed() {
         if (!configured && !active) return;
@@ -188,6 +268,10 @@ final class NotificationCloudFeature {
         int max = values.get("notification_capsule_max_dp") instanceof Number n ? Math.max(0, Math.min(240, n.intValue())) : 0;
         main.post(() -> {
             if (configured == enabled && capsuleMaxDp == max && rules.equals(next)) return;
+            if (!enabled || !rules.equals(next)) {
+                if (capsuleResume != null) capsuleResume.reset();
+                if (presentation != null) presentation.finishUnlock();
+            }
             rules = next; configured = enabled; capsuleMaxDp = max;
             changed();
         });
@@ -204,8 +288,9 @@ final class NotificationCloudFeature {
     private void refresh() {
         KeyguardManager keyguard = context == null ? null : context.getSystemService(KeyguardManager.class);
         unlockedSnapshot = !screenBlocked && keyguard != null && !keyguard.isKeyguardLocked();
-        boolean nextActive = enabled() && unlocked() && nativeCloud != null;
-        publishAlertStatus(nextActive && collection != null && nativeCloud.available() && !rules.keepAlerts());
+        boolean awake = unlocked();
+        boolean nextActive = enabled() && (awake || rules.retainOnLock() && lockPolicy != null) && nativeCloud != null;
+        publishAlertStatus(nextActive && awake && collection != null && nativeCloud.available() && !rules.keepAlerts());
         if (!nextActive || collection == null) {
             if (presentation != null) presentation.clear();
             if (collectionPage != null) collectionPage.close();
@@ -227,7 +312,7 @@ final class NotificationCloudFeature {
                 String key = notification.getKey();
                 liveKeys.add(key);
                 var mode = mode(entry, notification);
-                if (mode == NotificationCloudRules.Mode.NATIVE) continue;
+                if (mode == NotificationCloudRules.Mode.NATIVE || !awake && !lockPolicy.allows(entry, notification, rules.lockCards())) continue;
                 next.put(key, entry);
                 var current = store.get(key);
                 if (mode == NotificationCloudRules.Mode.EXPAND && newNotificationKeys.contains(key)) reminders.add(key);
@@ -236,7 +321,7 @@ final class NotificationCloudFeature {
             }
             store.retainSuppressed(liveKeys);
             newNotificationKeys.clear();
-            Set<String> autoExpand = !reminders.isEmpty() && permitsAutoExpansion() ? reminders : Set.of();
+            Set<String> autoExpand = awake && !reminders.isEmpty() && permitsAutoExpansion() ? reminders : Set.of();
             if (actions != null) actions.retainFloatingButtons(next.keySet());
             for (var entry : store.entries()) if (!next.containsKey(entry.key())) store.forgetView(entry.key());
             entries.clear(); entries.putAll(next);
@@ -293,6 +378,15 @@ final class NotificationCloudFeature {
                 || !rules.replaceHeadsUp()) return false;
         return !store.suppressed(notification.getKey()) && eligible(entry, notification);
     }
+    boolean canConvertForIcon(Object entry, StatusBarNotification notification) {
+        return enabled() && nativeCloud != null && nativeCloud.available() && rules.replaceHeadsUp()
+                && (rules.original() != NotificationCloudRules.Original.COLLECT || collectionSupported())
+                && !store.suppressed(notification.getKey()) && eligible(entry, notification);
+    }
+    boolean convertibleAfterUnlock(Object entry) {
+        StatusBarNotification source = notification(entry);
+        return enabled() && !store.suppressed(source.getKey()) && eligible(entry, source);
+    }
     boolean ready(String key, long generation) {
         var item = store.get(key);
         return item != null && store.ready(key, generation) && !item.ready();
@@ -314,12 +408,16 @@ final class NotificationCloudFeature {
                 rank.getImportance(), rank.getChannel() == null ? NotificationManager.IMPORTANCE_UNSPECIFIED : rank.getChannel().getImportance(), rank.isSuspended(), rules);
     }
     StatusBarNotification renderNotification(java.util.List<NotificationCloudStore.Entry<StatusBarNotification>> group) {
-        return actions == null ? group.getFirst().value().clone() : actions.decorate(group, rules);
+        StatusBarNotification render = actions == null ? group.getFirst().value().clone() : actions.decorate(group, rules);
+        if (!unlocked() && rules.lockCards()) {
+            NotificationLockscreenCards.preparePreview(render.getNotification());
+        }
+        return render;
     }
     java.util.List<NotificationCloudStore.Entry<StatusBarNotification>> group(String key) {
         var item = store.get(key); if (item == null) return java.util.List.of();
         if (!rules.groupApps()) return java.util.List.of(item);
-        String identity = NotificationCloudGrouping.identity(item.value());
+        NotificationCloudGrouping.Identity identity = NotificationCloudGrouping.identity(item.value());
         return store.entries().stream().filter(entry -> !store.suppressed(entry.key()) && NotificationCloudGrouping.identity(entry.value()).equals(identity)).toList();
     }
     void dismissCard(String key) {
@@ -365,6 +463,17 @@ final class NotificationCloudFeature {
     void openCollection(View anchor, android.view.ViewGroup stack) {
         if (collectionPage != null) collectionPage.open(anchor, stack);
     }
+    boolean groupNavigationSupported() {
+        return collectionPage != null && collectionPage.canNavigateGroups() && presentation != null
+                && presentation.notificationStack() != null;
+    }
+    void openCollectionGroup(NotificationCloudGrouping.Identity identity) {
+        closeCard(() -> {
+            if (enabled() && unlocked() && rules.groupApps() && groupNavigationSupported())
+                collectionPage.requestGroup(presentation.notificationStack(), identity);
+        });
+    }
+    java.util.Set<String> displayedCollectionKeys() { return collectionPage.displayedKeys(); }
     boolean collectionSupported() { return collectionPage != null; }
     boolean collectionPageShowing() { return collectionPage != null && collectionPage.projected(); }
     boolean collectionContains(StatusBarNotification notification) {

@@ -26,6 +26,7 @@ final class NativeNotificationCollectionEntry {
     private final Method parent, inflate, rowView, content;
     private final NotificationCloudFeature feature;
     private ViewGroup stack;
+    private View entryRow;
     private Object owner;
     private LinearLayout icons;
     private List<String> displayed = List.of();
@@ -60,16 +61,65 @@ final class NativeNotificationCollectionEntry {
             nativeMaterial = null;
         }
         material = nativeMaterial;
+        try { alignSwipeHighlight(loader); }
+        catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+            feature.failure("Collection row uses stock highlight bounds", unavailable);
+        }
         try { installEmptyShade(loader); }
         catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
             feature.failure("Notification collection empty-state adapter unavailable", unavailable);
         }
     }
 
+    /** SystemUI includes child swipe offset in its clip. A whole-row swipe already moved the canvas. */
+    private void alignSwipeHighlight(ClassLoader loader) throws ReflectiveOperationException {
+        Class<?> outline = Reflect.type(loader, "com.android.systemui.statusbar.notification.row.ExpandableOutlineView");
+        Class<?> ext = Reflect.type(loader, "com.oplus.systemui.statusbar.notification.row.OplusExpandableOutlineViewExImpl");
+        Class<?> clip = Reflect.type(loader, "com.oplus.systemui.notification.material.NotificationSpotLightDelegate$ClipSpec");
+        Method bounds = Reflect.method(ext, "getSpotLightClipSpec", clip, outline);
+        Field wholeRow = Reflect.field(outline, "mDismissUsingRowTranslationX", boolean.class);
+        SwipeClip nativeClip = new SwipeClip(clip);
+        feature.module.hook(bounds).setExceptionMode(io.github.libxposed.api.XposedInterface.ExceptionMode.PROTECTIVE)
+                .intercept(chain -> {
+                    Object result = chain.proceed();
+                    if (entryRow == null || chain.getArg(0) != entryRow || result == null
+                            || !wholeRow.getBoolean(entryRow)) return result;
+                    return nativeClip.local(result, (int) entryRow.getTranslationX());
+                });
+    }
+
+    static final class SwipeClip {
+        private final Method copy;
+        private final Field left, right, top, bottom, topRadius, bottomRadius, smooth;
+
+        SwipeClip(Class<?> clip) throws ReflectiveOperationException {
+            copy = Reflect.method(clip, "copy", clip, int.class, int.class, int.class, int.class,
+                    float.class, float.class, boolean.class);
+            left = Reflect.field(clip, "left", int.class);
+            right = Reflect.field(clip, "right", int.class);
+            top = Reflect.field(clip, "top", int.class);
+            bottom = Reflect.field(clip, "bottom", int.class);
+            topRadius = Reflect.field(clip, "topCornerRadius", float.class);
+            bottomRadius = Reflect.field(clip, "bottomCornerRadius", float.class);
+            smooth = Reflect.field(clip, "useSmoothRadius", boolean.class);
+        }
+
+        Object local(Object clip, int offset) throws IllegalAccessException {
+            if (offset == 0) return clip;
+            return Reflect.call(copy, clip, left.getInt(clip) - Math.max(0, offset), top.getInt(clip),
+                    right.getInt(clip) - Math.min(0, offset), bottom.getInt(clip),
+                    topRadius.getFloat(clip), bottomRadius.getFloat(clip), smooth.getBoolean(clip));
+        }
+    }
+
+    ViewGroup listFor(Object root) {
+        return rootType.isInstance(root) ? (ViewGroup) Reflect.call(parent, Reflect.get(container, root)) : null;
+    }
+
     @SuppressWarnings("unchecked")
     boolean append(Object root, Object spec, List<?> children, List<String> packages) throws ReflectiveOperationException {
-        if (!rootType.isInstance(root) || packages.isEmpty()) return false;
-        ViewGroup list = (ViewGroup) Reflect.call(parent, Reflect.get(container, root));
+        if (packages.isEmpty()) return false;
+        ViewGroup list = listFor(root);
         if (list == null) return false;
         if (owner == null || stack != list) create(list);
         if (!displayed.equals(packages)) {
@@ -156,6 +206,7 @@ final class NativeNotificationCollectionEntry {
         Object nativeController = controller.newInstance(context);
         Reflect.call(inflate, nativeController, list, data);
         View row = (View) Reflect.call(rowView, nativeController);
+        entryRow = row;
         Reflect.call(content, row, body);
         if (material != null) row.addOnAttachStateChangeListener(material);
         stack = list;

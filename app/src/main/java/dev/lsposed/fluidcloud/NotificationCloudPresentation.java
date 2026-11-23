@@ -20,6 +20,10 @@ final class NotificationCloudPresentation {
     private boolean rebuildQueued;
     private final Runnable rebuildShade = this::rebuildShade;
     private NativeNotificationCollectionEntry collectionEntry;
+    private Object renderRoot;
+    android.view.ViewGroup notificationStack() {
+        return collectionEntry == null ? null : collectionEntry.listFor(renderRoot);
+    }
     private boolean grouping;
     private java.util.Set<String> lastKeys = java.util.Set.of();
     private NotificationCloudRules.Original lastOriginal;
@@ -53,8 +57,7 @@ final class NotificationCloudPresentation {
             if (notification != null && summary(notification)) return true;
             if (feature.collectionPageShowing())
                 return notification == null || !feature.collectionContains(notification);
-            if (notification != null && (collected(notification.getKey())
-                    || ready(notification.getKey()) && feature.rules().original() == NotificationCloudRules.Original.HIDE)) return true;
+            if (notification != null && replaced(notification.getKey())) return true;
             return result;
         });
         try { installCollectionRendering(loader); }
@@ -87,6 +90,7 @@ final class NotificationCloudPresentation {
         collectionEntry = new NativeNotificationCollectionEntry(feature, loader, spec, node);
         feature.module.hook(build).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
             Object result = chain.proceed();
+            renderRoot = chain.getArg(0);
             List<?> nodes = (List<?>) Reflect.call(children, result);
             if (feature.collectionPageShowing()) {
                 collectionEntry.restoreEmptyShade();
@@ -188,6 +192,8 @@ final class NotificationCloudPresentation {
         return grouping && shouldCollect() && ready(key);
     }
     private boolean replaced(String key) {
+        if (!feature.unlocked()) return feature.enabled() && feature.rules().retainOnLock()
+                && feature.rules().original() != NotificationCloudRules.Original.KEEP && feature.store.ready(key);
         return feature.rules().original() == NotificationCloudRules.Original.HIDE && ready(key) || collected(key);
     }
     void refresh() {
@@ -197,7 +203,8 @@ final class NotificationCloudPresentation {
         if (icons != null) {
             if (live == null) icons.reconcile(); else icons.reconcile(live);
         }
-        java.util.Set<String> keys = feature.store.entries().stream().filter(entry -> ready(entry.key()))
+        java.util.Set<String> keys = feature.store.entries().stream().filter(entry -> ready(entry.key())
+                        || !feature.unlocked() && replaced(entry.key()))
                 .map(dev.howard.colorosenhance.notifications.NotificationCloudStore.Entry::key).collect(java.util.stream.Collectors.toSet());
         if (lastKeys.equals(keys) && lastOriginal == feature.rules().original()) return;
         lastKeys = java.util.Set.copyOf(keys); lastOriginal = feature.rules().original();
@@ -213,6 +220,9 @@ final class NotificationCloudPresentation {
         if (icons != null) icons.reconcile();
         queueRebuild();
     }
+    void startUnlock() { if (icons != null) icons.startUnlock(); }
+    void finishUnlock() { if (icons != null) icons.finishUnlock(); }
+    void removed(String key) { if (icons != null) icons.removed(key); }
     private void queueRebuild() {
         if (builder != null && !rebuildQueued) rebuildQueued = feature.main.post(rebuildShade);
     }

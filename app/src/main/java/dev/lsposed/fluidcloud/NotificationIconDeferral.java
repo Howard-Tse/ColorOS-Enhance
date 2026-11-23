@@ -26,6 +26,8 @@ final class NotificationIconDeferral {
     private final Set<String> attempted = new HashSet<>();
     private final Map<String, Runnable> pending = new HashMap<>();
     private Set<String> masked = Set.of();
+    private final Set<String> restoring = new HashSet<>();
+    private final Runnable endRestore = this::finishUnlock;
 
     NotificationIconDeferral(NotificationCloudFeature feature, ClassLoader loader, Predicate<String> replaced)
             throws ReflectiveOperationException {
@@ -116,10 +118,39 @@ final class NotificationIconDeferral {
         reconcile(feature.liveNotifications());
     }
 
+    void startUnlock() {
+        // Prime the icon StateFlow before SystemUI announces that the shade is unlocked.
+        // No private row or capsule is rendered until the normal unlock check succeeds.
+        if (!restoring.isEmpty()) return;
+        var live = feature.liveNotifications();
+        for (var item : live) {
+            Object entry = feature.liveEntry(item.getKey());
+            if (entry != null && feature.canConvertForIcon(entry, item)) restoring.add(item.getKey());
+        }
+        if (restoring.isEmpty()) return;
+        feature.main.postDelayed(endRestore, CONVERSION_TIMEOUT_MS);
+        reconcile(live);
+    }
+
+    void finishUnlock() {
+        feature.main.removeCallbacks(endRestore);
+        if (restoring.isEmpty()) return;
+        restoring.clear();
+        reconcile();
+    }
+
+    void removed(String key) {
+        restoring.remove(key);
+        attempted.remove(key);
+        Runnable timeout = pending.remove(key);
+        if (timeout != null) feature.main.removeCallbacks(timeout);
+    }
+
     void reconcile(List<StatusBarNotification> notifications) {
         Set<String> next = new HashSet<>(), live = new HashSet<>();
         Set<String> heldGroups = new HashSet<>(), ordinaryGroups = new HashSet<>();
-        boolean enabled = feature.enabled() && feature.unlocked() && feature.rules().replaceHeadsUp();
+        boolean enabled = feature.enabled() && (feature.unlocked() || feature.rules().retainOnLock())
+                && feature.rules().replaceHeadsUp();
         for (StatusBarNotification notification : notifications) {
             String key = notification.getKey();
             live.add(key);
@@ -127,10 +158,11 @@ final class NotificationIconDeferral {
                 next.add(key);
                 continue;
             }
-            if (!enabled) {
-                continue;
-            }
-            boolean hidden = replaced.test(key) || pending.containsKey(key);
+            if (!enabled && restoring.isEmpty()) continue;
+            boolean confirmed = enabled && replaced.test(key);
+            if (confirmed) restoring.remove(key);
+            boolean hidden = confirmed || enabled && pending.containsKey(key)
+                    || feature.enabled() && feature.rules().replaceHeadsUp() && restoring.contains(key);
             if (hidden) next.add(key);
             if (notification.isGroup() && !isSummary(notification)) {
                 (hidden ? heldGroups : ordinaryGroups).add(notification.getGroupKey());
@@ -141,6 +173,8 @@ final class NotificationIconDeferral {
             if (isSummary(notification) && heldGroups.contains(notification.getGroupKey())) next.add(notification.getKey());
         }
         attempted.retainAll(live);
+        restoring.retainAll(live);
+        if (restoring.isEmpty()) feature.main.removeCallbacks(endRestore);
         pending.entrySet().removeIf(entry -> {
             if (enabled && live.contains(entry.getKey()) && !replaced.test(entry.getKey())) return false;
             feature.main.removeCallbacks(entry.getValue());
