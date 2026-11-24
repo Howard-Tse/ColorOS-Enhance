@@ -20,12 +20,11 @@ final class NativeNotificationCards {
         manual = Reflect.method(owner, "n", boolean.class);
         showing = Reflect.method(owner, "m", boolean.class);
         refresh = Reflect.method(owner, "o", void.class, boolean.class);
-        current = Reflect.field(owner, "f", Object.class);
         Class<?> uiType = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.card.ui.model.k");
-        state = Reflect.field(owner, "g", uiType);
         Class<?> callback = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.card.ui.view.c");
-        listener = Reflect.field(owner, "m", callback); deliver = Reflect.method(callback, "a", void.class, uiType);
-        blocked = Reflect.field(owner, "i", boolean.class);
+        var fields = CardFields.resolve(owner, uiType, callback);
+        current = fields.current(); state = fields.state(); listener = fields.listener(); blocked = fields.blocked();
+        deliver = Reflect.method(callback, "a", void.class, uiType);
         Class<?> model = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.card.data.model.a");
         key = Reflect.field(model, "a", String.class); service = Reflect.field(model, "x", String.class);
         creator = Reflect.field(model, "i", Object.class); actions = Reflect.field(model, "j", Object.class);
@@ -40,6 +39,21 @@ final class NativeNotificationCards {
         refreshAction = action.getDeclaredConstructor(int.class, Object.class);
         reapply = Reflect.method(action, "invoke", Object.class);
     }
+    record CardFields(Field current, Field state, Field listener, Field blocked) {
+        static CardFields resolve(Class<?> owner, Class<?> state, Class<?> listener) throws NoSuchFieldException {
+            try { return bind(owner, state, listener, "f", "g", "m", "i"); }
+            catch (NoSuchFieldException oldLayoutAbsent) { return bind(owner, state, listener, "e", "f", "l", "h"); }
+        }
+
+        private static CardFields bind(Class<?> owner, Class<?> uiType, Class<?> callback, String list,
+                                       String state, String listener, String blocked) throws NoSuchFieldException {
+            Field current = Reflect.field(owner, list, Object.class);
+            if (current.getType() != Object.class) throw new NoSuchFieldException(list);
+            return new CardFields(current, Reflect.field(owner, state, uiType), Reflect.field(owner, listener, callback),
+                    Reflect.field(owner, blocked, boolean.class));
+        }
+    }
+
     boolean contains(NotificationCloudFeature feature, List<?> models) {
         if (!feature.enabled()) return false;
         for (Object model : models) if (feature.store.get((String) Reflect.get(key, model)) != null) return true;

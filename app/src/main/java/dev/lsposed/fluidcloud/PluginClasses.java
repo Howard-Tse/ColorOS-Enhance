@@ -4,6 +4,7 @@ import android.content.Context;
 import dalvik.system.DexFile;
 import dev.howard.colorosenhance.diagnostics.SeedlingSdkDiagnostics;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.function.Predicate;
@@ -90,6 +91,22 @@ final class PluginClasses {
             if(!method.isBridge()&&!method.isSynthetic()&&method.getReturnType()==result
                     &&java.util.Arrays.equals(method.getParameterTypes(),args))return true;
         return false;
+    }
+
+    static Method materialPath(NativeCameraCard.Lookup lookup, Class<?> tuple) throws ReflectiveOperationException {
+        Method matched = null;
+        for (String helper : List.of("l", "k")) {
+            Method path;
+            try {
+                path = Reflect.method(lookup.load("com.oplus.systemui.plugins.common.util." + helper),
+                        "a", void.class, android.graphics.Path.class, int.class, int.class, int.class, int.class, tuple);
+            } catch (ClassNotFoundException | NoSuchMethodException absent) { continue; }
+            if (!java.lang.reflect.Modifier.isStatic(path.getModifiers())) continue;
+            if (matched != null && !matched.equals(path)) throw new NoSuchMethodException("Ambiguous native material path");
+            matched = path;
+        }
+        if (matched == null) throw new NoSuchMethodException("Native template material path");
+        return matched;
     }
 
     static Class<?> outline(ClassLoader loader) throws ReflectiveOperationException {

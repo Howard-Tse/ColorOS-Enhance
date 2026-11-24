@@ -74,6 +74,11 @@ final class CameraCardExpansion {
                     while(hooks.size()>cornerHooks)hooks.removeLast().unhook();
                     module.error("Card corner profile unavailable; retaining native corners",error);
                 }
+                try {
+                    corners.installMenuPreview(module, host.getDeclaringClass().getClassLoader(), nativeCard.cardType, hooks);
+                } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+                    module.error("Native long-press card preview corners unavailable", unavailable);
+                }
                 NativeInstantCameraCard instant = installInstant(loader, nativeCard, hooks);
                 if (!nativeCard.legacy) {
                     try {

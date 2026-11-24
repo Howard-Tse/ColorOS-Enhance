@@ -122,15 +122,7 @@ final class NativeCardGlass {
         Method update = Reflect.method(updates, "a", Object.class, Object.class, continuation);
         sharedStroke = new NativeTemplateStroke(loader);
         try {
-            Class<?> tuple = Reflect.type(loader, "kotlin.Triple");
-            var factory = Reflect.method(Reflect.type(loader, "com.oplus.systemui.plugins.seedling.util.c"), "f", tuple);
-            var materialPath = Reflect.method(Reflect.type(loader, "com.oplus.systemui.plugins.common.util.l"),
-                    "a", void.class, android.graphics.Path.class, int.class, int.class, int.class, int.class, tuple);
-            // Use the path drawn by CardGradientOverlayView. The framework outline
-            // can fall back from G2 to a circular path in battery saver.
-            sharedContour = new NativeTemplateStroke.Contour((path, bounds) ->
-                    Reflect.call(materialPath, null, path, bounds.left, bounds.top, bounds.right, bounds.bottom,
-                            Reflect.call(factory, null)));
+            sharedContour = new NativeTemplateStroke.Contour(NativeTemplateStroke.materialPath(loader));
         } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
             module.error("Native full-card stroke outline unavailable", unavailable);
         }

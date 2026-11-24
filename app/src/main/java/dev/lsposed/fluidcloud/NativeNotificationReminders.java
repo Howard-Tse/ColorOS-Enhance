@@ -31,11 +31,10 @@ final class NativeNotificationReminders {
         modelRevision = Reflect.method(model, "u", long.class);
     }
 
-    void installDuration(NotificationCloudFeature feature, ClassLoader loader) throws ReflectiveOperationException {
+    void installDuration(NotificationCloudFeature feature, ClassLoader loader, Class<?> wrapped) throws ReflectiveOperationException {
         String plugin = "com.oplus.systemui.plugins.";
         Class<?> card = Reflect.type(loader, plugin + "seedling.card.data.model.a");
         Class<?> action = Reflect.type(loader, plugin + "seedling.capsule.data.repo.c");
-        Class<?> wrapped = Reflect.type(loader, plugin + "seedling.data.interactor.m");
         Field actionModel = Reflect.field(action, "a", wrapped);
         Field sourceModel = Reflect.field(wrapped, "a", Reflect.type(loader, plugin + "livealert.lib.m"));
         Constructor<?> constructor = null;

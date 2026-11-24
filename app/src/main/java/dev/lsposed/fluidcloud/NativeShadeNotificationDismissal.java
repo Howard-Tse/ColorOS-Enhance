@@ -15,31 +15,29 @@ final class NativeShadeNotificationDismissal {
     private final List<XposedInterface.HookHandle> hooks = new ArrayList<>();
     private volatile Map<Object, List<NotificationCloudStore.Entry<StatusBarNotification>>> rows = Map.of();
 
-    NativeShadeNotificationDismissal(NotificationCloudFeature feature, ClassLoader plugin, ClassLoader host)
+    NativeShadeNotificationDismissal(NotificationCloudFeature feature, ClassLoader plugin, ClassLoader host, Class<?> model)
             throws ReflectiveOperationException {
         this.feature = feature;
         Class<?> entry = Reflect.type(plugin, "com.oplus.systemui.plugins.seedling.notification.data.model.c");
-        Class<?> model = Reflect.type(plugin, "com.oplus.systemui.plugins.seedling.data.interactor.m");
         Class<?> core = Reflect.type(plugin, "com.oplus.systemui.plugins.livealert.lib.m");
         var wrapped = Reflect.field(model, "a", core);
         var entryModel = Reflect.uniqueField(entry, field -> Reflect.instance(field) && field.getType() == model);
-        var create = entry.getDeclaredConstructor(String.class, View.class, int.class, String.class, String.class,
-                boolean.class, boolean.class, String.class, model, int.class, String.class);
+        var create = RowConstructor.resolve(entry, model);
         String customCard = "com.oplus.systemui.statusbar.notification.customcard.";
         Class<?> hostRow = Reflect.type(host, customCard + "OplusCustomRow");
         var getEntry = Reflect.method(hostRow, "getEntry", entry.getSuperclass());
         Class<?> manager = Reflect.type(host, customCard + "OplusCustomRowControllerManager");
         var dismiss = Reflect.method(manager, "dissmissCustomRow", void.class, hostRow, String.class);
         try {
-            hooks.add(feature.module.hook(create).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
+            hooks.add(feature.module.hook(create.constructor()).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
                 var currentRows = rows;
                 if (currentRows.isEmpty()) return chain.proceed();
-                var group = currentRows.get(Reflect.get(wrapped, chain.getArg(8)));
+                var group = currentRows.get(Reflect.get(wrapped, chain.getArg(create.model())));
                 if (group == null) return chain.proceed();
                 boolean clearable = clearable(group);
-                if (clearable == (boolean) chain.getArg(6)) return chain.proceed();
+                if (clearable == (boolean) chain.getArg(create.deleteMenu())) return chain.proceed();
                 Object[] args = chain.getArgs().toArray();
-                args[6] = clearable; // CustomRowEntry.isShowDeleteMenu is also the native swipe eligibility.
+                args[create.deleteMenu()] = clearable; // CustomRowEntry.isShowDeleteMenu is also the native swipe eligibility.
                 return chain.proceed(args);
             }));
             hooks.add(feature.module.hook(dismiss).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
@@ -58,6 +56,19 @@ final class NativeShadeNotificationDismissal {
         } catch (RuntimeException | LinkageError failure) {
             close();
             throw failure;
+        }
+    }
+
+    record RowConstructor(java.lang.reflect.Constructor<?> constructor, int model, int deleteMenu) {
+        static RowConstructor resolve(Class<?> entry, Class<?> model) throws NoSuchMethodException {
+            try {
+                return new RowConstructor(entry.getDeclaredConstructor(String.class, View.class, int.class,
+                        String.class, String.class, boolean.class, boolean.class, String.class, model,
+                        int.class, String.class), 8, 6);
+            } catch (NoSuchMethodException olderSignatureAbsent) {
+                return new RowConstructor(entry.getDeclaredConstructor(String.class, View.class, ArrayList.class,
+                        int.class, String.class, String.class, boolean.class, boolean.class, String.class, model), 9, 7);
+            }
         }
     }
 

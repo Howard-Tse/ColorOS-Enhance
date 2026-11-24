@@ -73,17 +73,14 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
         wrapperSize = size;
         wrapperView = view;
         rebindWrapper = rebind;
-        Class<?> interactor = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.data.interactor.l");
-        Field singleton = Reflect.uniqueField(interactor, field -> java.lang.reflect.Modifier.isStatic(field.getModifiers())
-                && field.getType() == interactor);
-        Object repository = Reflect.get(singleton, null);
-        Class<?> listenerType = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.data.interactor.d");
-        listener = listenerType.getDeclaredConstructor(interactor, entryType).newInstance(repository, entry);
-        changed = Reflect.method(listenerType, "b", void.class, List.class);
+        var binding = NotificationPluginRepository.resolve(loader, entryType);
+        Object repository = Reflect.get(binding.singleton(), null);
+        listener = binding.listener().newInstance(repository, entry);
+        changed = binding.publish();
         Object shade = null, shadeUpdates = null;
         try {
             shade = enumValue(entryType, "ENTRY_NOTIFICATION");
-            shadeUpdates = listenerType.getDeclaredConstructor(interactor, entryType).newInstance(repository, shade);
+            shadeUpdates = binding.listener().newInstance(repository, shade);
             installShadeLaunchObserver(feature, loader);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
             feature.failure("Notification-center native card entry unavailable", unavailable);
@@ -92,7 +89,7 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
         shadeListener = shadeUpdates;
         NativeShadeNotificationDismissal shadeSwipe = null;
         if (shadeListener != null) try {
-            shadeSwipe = new NativeShadeNotificationDismissal(feature, loader, host.getClassLoader());
+            shadeSwipe = new NativeShadeNotificationDismissal(feature, loader, host.getClassLoader(), binding.wrapped());
             feature.module.info("Native notification-center swipe dismissal installed");
         } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
             feature.failure("Native notification-center swipe dismissal unavailable", unavailable);
@@ -104,12 +101,12 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
             feature.failure("Converted capsule caption and width unavailable", unavailable);
         }
         capsule = capsuleOptions;
-        try { NativeNotificationBuilds.install(feature, loader); }
+        try { NativeNotificationBuilds.install(feature, loader, binding, entryType); }
         catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
             feature.failure("Extended notification build queue unavailable; unprepared originals retained", unavailable);
         }
         NativeNotificationControls optional;
-        try { optional = new NativeNotificationControls(feature, root, model); }
+        try { optional = new NativeNotificationControls(feature, root, binding); }
         catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
             optional = null; feature.failure("Notification capsule controls unavailable; original notifications retained", failure);
         }
@@ -117,7 +114,7 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
         NativeNotificationReminders nativeReminders = null;
         if (controls != null) try {
             nativeReminders = new NativeNotificationReminders(model, placementMetadata);
-            nativeReminders.installDuration(feature, loader);
+            nativeReminders.installDuration(feature, loader, binding.wrapped());
         } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
             feature.failure(nativeReminders == null ? "Native notification auto-expansion unavailable"
                     : "Native notification auto-expansion uses the system duration", unavailable);

@@ -241,7 +241,9 @@ private fun SettingsApp(activity: MainActivity, route: String, update: Int) {
             if (launchRelease.hasNotes()) Column(Modifier.heightIn(max = 320.dp).verticalScrollCompat()) {
                 dev.howard.colorosenhance.updates.ReleaseNotesText(launchRelease, Modifier.padding(top = 12.dp))
             }
-            Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            TextButton("跳过此版本", { app.skipRelease(launchRelease.versionCode()) },
+                Modifier.fillMaxWidth().padding(top = 12.dp))
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 TextButton("稍后", { app.launchUpdates().dismiss() }, Modifier.weight(1f))
                 TextButton("查看更新", {
                     app.launchUpdates().dismiss()

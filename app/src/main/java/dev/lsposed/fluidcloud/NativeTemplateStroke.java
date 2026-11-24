@@ -28,6 +28,14 @@ final class NativeTemplateStroke {
     @FunctionalInterface
     interface PathSource { void build(Path path, Rect bounds); }
 
+    static PathSource materialPath(ClassLoader loader) throws ReflectiveOperationException {
+        Class<?> tuple = Reflect.type(loader, "kotlin.Triple");
+        var factory = Reflect.method(Reflect.type(loader, "com.oplus.systemui.plugins.seedling.util.c"), "f", tuple);
+        var draw = PluginClasses.materialPath(name -> Reflect.type(loader, name), tuple);
+        return (path, bounds) -> Reflect.call(draw, null, path, bounds.left, bounds.top, bounds.right, bounds.bottom,
+                Reflect.call(factory, null));
+    }
+
     static final class Contour {
         private final Field strokePaint;
         private final PathSource source;

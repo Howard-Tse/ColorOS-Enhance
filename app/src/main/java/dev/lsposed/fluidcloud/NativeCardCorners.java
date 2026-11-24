@@ -3,9 +3,13 @@ package dev.lsposed.fluidcloud;
 import android.content.Context;
 import android.graphics.Outline;
 import android.graphics.Path;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.drawable.GradientDrawable;
 import android.view.View;
+import android.graphics.drawable.ShapeDrawable;
+import android.graphics.drawable.shapes.PathShape;
+import androidx.core.view.OneShotPreDrawListener;
 import android.widget.FrameLayout;
 import io.github.libxposed.api.XposedInterface;
 import java.lang.reflect.Method;
@@ -75,6 +79,47 @@ final class NativeCardCorners {
             if (!java.util.Objects.equals(Reflect.get(glowProfile, glow), profile))
                 glowProfile.set(glow, profile);
             return chain.proceed();
+        }));
+    }
+
+    void installMenuPreview(HookEntry module, ClassLoader hostLoader, Class<?> cardType,
+                            ArrayList<XposedInterface.HookHandle> hooks) throws ReflectiveOperationException {
+        String menu = "com.oplus.systemui.statusbar.notification.customcard.popupmenu.";
+        Class<?> cloner = Reflect.type(hostLoader, menu + "OplusCustomRowCloner");
+        Class<?> snapshot = Reflect.type(hostLoader, menu + "CloneContentView");
+        NativeTemplateStroke.PathSource material = null;
+        try { material = NativeTemplateStroke.materialPath(cardType.getClassLoader()); }
+        catch (ReflectiveOperationException | LinkageError unavailable) { /* Legacy card contour below. */ }
+        final NativeTemplateStroke.PathSource nativeMaterial = material;
+        Method capture = Reflect.method(cloner, "cloneContent", void.class, View.class, snapshot, String.class);
+        hooks.add(module.hook(capture).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
+            Object result = chain.proceed();
+            CloudCorners.Style style = currentStyle.get();
+            if (!style.enabled() || !cardType.isInstance(chain.getArg(0))) return result;
+            View original = (View) chain.getArg(0);
+            View preview = (View) chain.getArg(1);
+            if (original.getWidth() == 0 || original.getHeight() == 0) return result;
+            int width = original.getWidth(), height = original.getHeight();
+            Path contour = new Path();
+            if (nativeMaterial != null) try {
+                nativeMaterial.build(contour, new Rect(0, 0, width, height));
+            } catch (RuntimeException | LinkageError unavailable) { contour.rewind(); }
+            if (contour.isEmpty()) {
+                CloudCorners.path(contour, new RectF(0, 0, width, height),
+                        style.requested(original.getResources().getDisplayMetrics().density), style.continuous());
+            }
+            // The foreground is already a faithful snapshot, including its antialiased rim.
+            // Only the solid notification backdrop, installed on attach, needs the material contour.
+            OneShotPreDrawListener.add(preview, () -> {
+                if (preview.getBackground() instanceof GradientDrawable background && background.getColor() != null
+                        && background.getShape() == GradientDrawable.RECTANGLE && background.getColors() == null) {
+                    ShapeDrawable backdrop = new ShapeDrawable(new PathShape(contour, width, height));
+                    backdrop.setTintList(background.getColor());
+                    backdrop.setAlpha(background.getAlpha());
+                    preview.setBackground(backdrop);
+                }
+            });
+            return result;
         }));
     }
 

@@ -54,6 +54,7 @@ private fun UpdateScreen(activity: UpdateActivity) {
         1 -> ColorSchemeMode.MonetLight; 2 -> ColorSchemeMode.MonetDark; else -> ColorSchemeMode.MonetSystem
     }) }
     var request by rememberSaveable { mutableIntStateOf(0) }
+    var showUpdatePrompts by remember { mutableStateOf(app.updatePromptsEnabled()) }
     var includePrereleases by remember { mutableStateOf(app.prefersPrereleases()) }
     var loading by remember { mutableStateOf(true) }
     var result by remember { mutableStateOf<GitHubUpdateClient.Result?>(null) }
@@ -79,6 +80,10 @@ private fun UpdateScreen(activity: UpdateActivity) {
                     verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     item("channel") {
                         Card(Modifier.fillMaxWidth()) {
+                            SwitchPreference(showUpdatePrompts, { enabled ->
+                                app.setUpdatePromptsEnabled(enabled)
+                                showUpdatePrompts = enabled
+                            }, "启动时提醒新版本", summary = "打开应用时检查更新，有新版本时弹窗提醒。")
                             SwitchPreference(includePrereleases, { include ->
                                 app.setPreferPrereleases(include)
                                 includePrereleases = include
@@ -122,7 +127,7 @@ private fun UpdateScreen(activity: UpdateActivity) {
                         }
                     }
                     item("privacy") {
-                        Text("应用每次打开时按此设置检查一次，有更新才弹窗。也可在此手动检查。通过 HTTPS 访问 GitHub，不发送模块配置、媒体数据或设备标识；GitHub 会收到网络请求的 IP 地址。下载和安装由你在浏览器及安装器中确认。",
+                        Text("手动检查包含已跳过的版本。通过 HTTPS 访问 GitHub，不发送模块配置、媒体数据或设备标识；GitHub 会收到网络请求的 IP 地址。下载和安装由你在浏览器及安装器中确认。",
                             Modifier.padding(horizontal = 8.dp), fontSize = 12.sp, color = colors.onSurfaceVariantSummary)
                     }
                 }

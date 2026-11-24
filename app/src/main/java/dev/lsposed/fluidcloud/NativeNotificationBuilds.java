@@ -8,18 +8,18 @@ import java.util.Map;
 
 /** Ask the existing OEM task queue to prepare converted items outside its twenty-item build window. */
 final class NativeNotificationBuilds {
-    static void install(NotificationCloudFeature feature, ClassLoader loader) throws ReflectiveOperationException {
-        Class<?> repository = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.data.interactor.l");
-        Class<?> entry = Reflect.type(loader, "com.oplus.systemui.plugins.livealert.lib.EntryType");
-        Class<?> wrapped = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.data.interactor.m");
+    static void install(NotificationCloudFeature feature, ClassLoader loader, NotificationPluginRepository binding,
+                        Class<?> entry) throws ReflectiveOperationException {
+        Class<?> repository = binding.singleton().getType();
+        Class<?> wrapped = binding.wrapped();
         Class<?> scheduler = Reflect.type(loader, "com.heytap.log.config.a");
         Class<?> task = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.engine.taskengine.o");
         Field candidates = Reflect.field(repository, "f", Map.class), builder = Reflect.field(repository, "m", scheduler);
         Method changed = Reflect.method(repository, "c", void.class, entry, boolean.class);
         Method key = Reflect.method(wrapped, "getKey", String.class), ready = Reflect.method(wrapped, "m", boolean.class);
-        Method pending = Reflect.method(scheduler, "o", Map.class, entry);
-        Method create = Reflect.method(scheduler, "l", task, entry, wrapped, int.class);
-        Method enqueue = Reflect.method(task, "b", Reflect.type(loader, "com.oplus.systemui.plugins.r8.R2"), Object.class);
+        Method pending = Reflect.signature(scheduler, Map.class, entry);
+        Method create = Reflect.signature(scheduler, task, entry, wrapped, int.class);
+        Method enqueue = task.getMethod("b", Object.class);
         feature.module.hook(changed).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
             Object result = chain.proceed();
             String area = chain.getArg(0).toString();

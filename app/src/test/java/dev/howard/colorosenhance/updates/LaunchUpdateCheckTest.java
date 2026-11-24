@@ -50,11 +50,34 @@ public class LaunchUpdateCheckTest {
     }
     @Test public void unexpectedFailureAndRejectedWorkerStaySilent() {
         Queue worker=new Queue(),main=new Queue();
-        LaunchUpdateCheck check=new LaunchUpdateCheck(worker,main,()->false,preview->{throw new IllegalStateException();},69,()->fail("No error popup"));
+        LaunchUpdateCheck check=new LaunchUpdateCheck(worker,main,()->false,()->true,code->false,preview->{throw new IllegalStateException();},69,()->fail("No error popup"));
         check.foreground();check.check();worker.run();main.run();assertNull(check.pending());
-        check=new LaunchUpdateCheck(task->{throw new java.util.concurrent.RejectedExecutionException();},main,()->false,preview->null,69,()->fail("No error popup"));
+        check=new LaunchUpdateCheck(task->{throw new java.util.concurrent.RejectedExecutionException();},main,()->false,()->true,code->false,preview->null,69,()->fail("No error popup"));
         check.foreground();check.check();assertNull(check.pending());
     }
+    @Test public void disabledPromptsSkipLaunchRequestAndIgnoreAnInFlightResult() {
+        Fixture f = new Fixture();
+        f.promptsEnabled = false;
+        f.checks.foreground(); f.checks.check();
+        assertTrue(f.worker.isEmpty());
+        f.promptsEnabled = true;
+        f.checks.check(); f.worker.run();
+        f.promptsEnabled = false;
+        f.main.run();
+        assertNull(f.checks.pending());
+    }
+
+    @Test public void skipOnlySuppressesTheChosenVersionOnLaterVisits() {
+        Fixture f = new Fixture();
+        f.skippedCode = f.release.versionCode();
+        f.checks.foreground(); f.checks.check(); f.complete();
+        assertNull(f.checks.pending());
+        f.checks.background();
+        f.result = new GitHubUpdateClient.Result(release(f.skippedCode + 1), null);
+        f.checks.foreground(); f.checks.check(); f.complete();
+        assertEquals(f.skippedCode + 1, f.checks.pending().versionCode());
+    }
+
     @Test public void aPreviewPromptRespectsOptInEvenIfItFinishesAfterOptOut() {
         Fixture f = new Fixture();
         var preview = new ReleaseInfo(71, "1.31.1", "Notes", "", ReleaseInfo.RELEASES_URL, "", true);
@@ -86,7 +109,9 @@ public class LaunchUpdateCheckTest {
         GitHubUpdateClient.Result result=new GitHubUpdateClient.Result(release,null);
         int requests,notifications;
         boolean includePrereleases, checkedWithPrereleases;
-        final LaunchUpdateCheck checks=new LaunchUpdateCheck(worker,main,()->includePrereleases,preview->{
+        boolean promptsEnabled = true;
+        long skippedCode;
+        final LaunchUpdateCheck checks=new LaunchUpdateCheck(worker,main,()->includePrereleases,()->promptsEnabled,code->code==skippedCode,preview->{
             requests++;checkedWithPrereleases=preview;return result;
         },69,()->notifications++);
         void complete(){worker.run();main.run();}

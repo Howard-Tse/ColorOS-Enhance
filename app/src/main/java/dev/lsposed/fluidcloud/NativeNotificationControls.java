@@ -22,9 +22,10 @@ final class NativeNotificationControls {
     private int menuGeneration;
 
     @SuppressWarnings("unchecked")
-    NativeNotificationControls(NotificationCloudFeature feature, View root, Class<?> model) throws ReflectiveOperationException {
+    NativeNotificationControls(NotificationCloudFeature feature, View root, NotificationPluginRepository binding) throws ReflectiveOperationException {
         this.feature = feature; ClassLoader loader = root.getClass().getClassLoader();
-        Class<?> owner = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.capsule.ui.viewmodel.A");
+        Class<?> container = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.capsule.ui.view.CapsuleContainer");
+        Class<?> owner = Reflect.field(container, "n", Object.class).getType();
         Class<?> capsule = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.capsule.data.model.a");
         Method update = Reflect.method(owner, "a", void.class, ArrayList.class);
         Method accepts = Reflect.method(owner, "H", boolean.class, capsule);
@@ -33,12 +34,11 @@ final class NativeNotificationControls {
         Method click = Reflect.method(owner, "p", void.class, String.class, boolean.class);
         Method expand = Reflect.method(owner, "w", void.class, String.class);
         Method normal = Reflect.method(owner, "v", void.class, owner, String.class);
-        Field list = Reflect.field(owner, "g", ArrayList.class), force = Reflect.field(owner, "y", boolean.class), blocked = Reflect.field(owner, "j", boolean.class);
+        var fields = CapsuleFields.resolve(owner, Reflect.type(loader, "com.oplus.systemui.plugins.seedling.base.a"));
         Field candidateKey = Reflect.field(capsule, "a", String.class);
-        Field action = Reflect.field(owner, "E", Reflect.type(loader, "com.oplus.systemui.plugins.seedling.capsule.ui.viewmodel.n"));
         Field controller = Reflect.field(capsule, "n", Reflect.type(loader, "com.oplus.systemui.plugins.seedling.capsule.data.model.d"));
         Class<?> repo = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.capsule.data.repo.e");
-        Class<?> wrapped = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.data.interactor.m");
+        Class<?> wrapped = binding.wrapped();
         Field wrappedModel = Reflect.field(repo, "a", wrapped);
         Field repoOwner = Reflect.field(repo, "b", Reflect.type(loader, "com.oplus.systemui.plugins.seedling.capsule.data.repo.h"));
         Class<?> size = Reflect.type(loader, "com.oplus.systemui.plugins.livealert.lib.ViewSize");
@@ -50,7 +50,8 @@ final class NativeNotificationControls {
         Object priority = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.aod.a").getDeclaredConstructor(int.class).newInstance(1);
         Constructor<?> tie = Reflect.type(loader, "com.heytap.log.uploader.b").getDeclaredConstructor(int.class, Object.class);
         Comparator<Object> comparator = (Comparator<Object>) tie.newInstance(4, tie.newInstance(3, priority));
-        Class<?> card = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.card.ui.viewmodel.i");
+        Class<?> cardContainer = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.card.ui.view.CardContainer");
+        Class<?> card = Reflect.field(cardContainer, "b", Object.class).getType();
         NativeNotificationCards capacity = new NativeNotificationCards(loader, card);
         cardSingleton = Reflect.uniqueField(card, field -> java.lang.reflect.Modifier.isStatic(field.getModifiers()) && field.getType() == card);
         timeout = Reflect.method(card, "k", boolean.class, String.class);
@@ -59,16 +60,17 @@ final class NativeNotificationControls {
         Field currentState = null;
         try {
             String cardPackage = "com.oplus.systemui.plugins.seedling.card.";
-            Class<?> eventData = Reflect.type(loader, cardPackage + "ui.viewmodel.g");
             Class<?> cardItem = Reflect.type(loader, cardPackage + "ui.model.o");
-            currentState = Reflect.field(card, "h", String.class);
-            transition = Reflect.method(card, "j", eventData, card, boolean.class, cardItem, int.class);
-            close = Reflect.method(card, "e", boolean.class, String.class, eventData);
+            currentState = Reflect.uniqueField(card, f -> Reflect.instance(f) && f.getType() == String.class);
+            transition = card.getDeclaredMethod("j", card, boolean.class, cardItem, int.class);
+            if (!java.lang.reflect.Modifier.isStatic(transition.getModifiers())) throw new NoSuchMethodException("card transition");
+            transition.setAccessible(true);
+            close = Reflect.method(card, "e", boolean.class, String.class, transition.getReturnType());
         } catch (ReflectiveOperationException unavailable) { /* The automatic card still expires in ColorOS. */ }
         autoCardClose = close;
         autoCardTransition = transition;
         cardState = currentState;
-        Class<?> interactor = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.data.interactor.l");
+        Class<?> interactor = binding.singleton().getType();
         Method dismiss = Reflect.method(interactor, "b", void.class, wrapped, boolean.class);
         Method key = Reflect.method(wrapped, "getKey", String.class);
         try {
@@ -101,13 +103,13 @@ final class NativeNotificationControls {
                     Object control = Reflect.get(controller, item);
                     if (!repo.isInstance(control)) throw new IllegalStateException("Unexpected native capsule view controller");
                     Object base = Reflect.get(wrappedModel, control), nativeView = Reflect.call(view, base, small);
-                    Object nativeAction = Reflect.get(action, instance);
+                    Object nativeAction = Reflect.get(fields.action(), instance);
                     if (nativeView != null) Reflect.call(callback, nativeView, nativeAction == null ? null
                             : handler.newInstance(Reflect.get(repoOwner, control), base, nativeAction, 2));
                 }
-                list.set(instance, next);
-                Reflect.call(apply, instance, Reflect.call(state, instance, next), force.getBoolean(instance) && !blocked.getBoolean(instance));
-                force.setBoolean(instance, false); return null;
+                fields.list().set(instance, next);
+                Reflect.call(apply, instance, Reflect.call(state, instance, next), fields.force().getBoolean(instance) && !fields.blocked().getBoolean(instance));
+                fields.force().setBoolean(instance, false); return null;
             }));
             hooks.add(feature.module.hook(click).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
                 String selected = (String) chain.getArg(0);
@@ -127,7 +129,7 @@ final class NativeNotificationControls {
             Class<?> actionEvent = Reflect.type(loader, "com.heytap.log.strategy.f");
             Class<?> clickEvent = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.card.ui.model.c");
             Class<?> cardItem = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.card.ui.model.o");
-            Field clickedItem = Reflect.field(clickEvent, "d", cardItem);
+            Field clickedItem = Reflect.uniqueField(clickEvent, f -> Reflect.instance(f) && f.getType() == cardItem);
             Field cardKey = Reflect.field(cardItem, "a", String.class);
             Method dispatch = Reflect.method(card, "h", void.class, actionEvent);
             hooks.add(feature.module.hook(dispatch).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
@@ -148,6 +150,19 @@ final class NativeNotificationControls {
         }
         cardTouch = touch;
     }
+    record CapsuleFields(Field list, Field force, Field blocked, Field action) {
+        static CapsuleFields resolve(Class<?> owner, Class<?> handler) throws NoSuchFieldException {
+            try { return bind(owner, handler, "g", "y", "j", "E"); }
+            catch (NoSuchFieldException oldLayoutAbsent) { return bind(owner, handler, "h", "z", "k", "F"); }
+        }
+
+        private static CapsuleFields bind(Class<?> owner, Class<?> handler, String list, String force,
+                                          String blocked, String action) throws NoSuchFieldException {
+            return new CapsuleFields(Reflect.field(owner, list, ArrayList.class), Reflect.field(owner, force, boolean.class),
+                    Reflect.field(owner, blocked, boolean.class), Reflect.field(owner, action, handler));
+        }
+    }
+
     boolean holds(String selected) { return cardTouch != null && cardTouch.holds(selected); }
     @SuppressWarnings({"unchecked", "rawtypes"}) private static Object enumValue(Class<?> type, String name) { return Enum.valueOf((Class) type, name); }
     void closeCard(Runnable continuation) {

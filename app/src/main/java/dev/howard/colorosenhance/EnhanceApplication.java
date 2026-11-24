@@ -15,13 +15,15 @@ import java.util.Map;
 import java.util.Set;
 
 public final class EnhanceApplication extends ModuleApplication {
+    private static final String UPDATE_PROMPTS = "update_prompts";
+    private static final String SKIPPED_RELEASES = "skipped_releases";
     private static final String PREFER_PRERELEASES = "prefer_prereleases";
     private final Handler main = new Handler(Looper.getMainLooper());
     private final CopyOnWriteArrayList<Runnable> observers = new CopyOnWriteArrayList<>();
     private final dev.howard.colorosenhance.updates.LaunchUpdateCheck launchUpdates =
             new dev.howard.colorosenhance.updates.LaunchUpdateCheck(
                     task->new Thread(task,"coloros-update-check").start(),main::post,
-                    this::prefersPrereleases,new GitHubUpdateClient()::check,BuildConfig.VERSION_CODE,this::notifyViews);
+                    this::prefersPrereleases,this::updatePromptsEnabled,this::skippedRelease,new GitHubUpdateClient()::check,BuildConfig.VERSION_CODE,this::notifyViews);
     private final dev.howard.colorosenhance.migration.MigrationController migration = new dev.howard.colorosenhance.migration.MigrationController(this);
     private final SettingsCoordinator settings = new SettingsCoordinator(this::settingsSource,this::notifyViews,
             ()->dev.howard.colorosenhance.icons.StatusIconCatalog.usesColorOsRingerSlot(dev.howard.colorosenhance.icons.StatusIconCatalog.slots(this)));
@@ -41,6 +43,22 @@ public final class EnhanceApplication extends ModuleApplication {
     public boolean prefersPrereleases() { return updatePreferences().getBoolean(PREFER_PRERELEASES, false); }
     public void setPreferPrereleases(boolean prefer) {
         updatePreferences().edit().putBoolean(PREFER_PRERELEASES, prefer).apply();
+        launchUpdates.dismiss();
+    }
+    public boolean updatePromptsEnabled() { return updatePreferences().getBoolean(UPDATE_PROMPTS, true); }
+    public void setUpdatePromptsEnabled(boolean enabled) {
+        updatePreferences().edit().putBoolean(UPDATE_PROMPTS, enabled).apply();
+        if (!enabled) launchUpdates.dismiss();
+    }
+    private boolean skippedRelease(long code) {
+        return updatePreferences().getStringSet(SKIPPED_RELEASES, Set.of()).contains(Long.toString(code));
+    }
+    public void skipRelease(long code) {
+        var prefs = updatePreferences();
+        var skipped = new java.util.HashSet<>(prefs.getStringSet(SKIPPED_RELEASES, Set.of()));
+        skipped.removeIf(saved -> Long.parseLong(saved) <= BuildConfig.VERSION_CODE);
+        skipped.add(Long.toString(code));
+        prefs.edit().putStringSet(SKIPPED_RELEASES, skipped).apply();
         launchUpdates.dismiss();
     }
     private SharedPreferences updatePreferences() { return getSharedPreferences("app_updates", MODE_PRIVATE); }
