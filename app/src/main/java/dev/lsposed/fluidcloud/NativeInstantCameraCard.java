@@ -83,21 +83,34 @@ final class NativeInstantCameraCard {
         }
         update(container, enabled);
     }
+    boolean isExpandedBody(View view) {
+        return type.isInstance(view.getParent()) && Reflect.call(current, view.getParent()) == view
+                && Boolean.TRUE.equals(Reflect.call(expanded, view.getParent()));
+    }
+    void applySpacing(ViewGroup container) {
+        if (!cards.spacing.adjustsCard()) return;
+        View body = (View) Reflect.call(current, container);
+        if (body == null || !isExpandedBody(body)) return;
+        cards.spacing.adjustWidth(body, false);
+        cards.spacing.template(body);
+    }
     void beforeAppearScene(ViewGroup container, boolean enabled) {
-        if (!enabled || preparingScene) return;
+        if ((!enabled && !cards.spacing.adjustsCard()) || preparingScene) return;
         preparingScene = true;
         try {
-            afterStateChange(container, true);
+            applySpacing(container);
+            if (enabled) afterStateChange(container, true);
             View value = (View) Reflect.call(current, container);
             // The new instant-appear builder snapshots measured height into its
             // SizeFragment. A requested layout alone arrives too late: it leaves
             // that whole animation cropping to the old unpadded height.
-            if (!owned.containsKey(value) || !value.isLayoutRequested()
+            if (value == null || (!owned.containsKey(value) && !(cards.spacing.adjustsCard() && isExpandedBody(value)))
+                    || !value.isLayoutRequested()
                     || container.getWidth() <= 0 || container.getHeight() <= 0) return;
             container.measure(View.MeasureSpec.makeMeasureSpec(container.getWidth(), View.MeasureSpec.EXACTLY),
                     View.MeasureSpec.makeMeasureSpec(container.getHeight(), View.MeasureSpec.EXACTLY));
             container.layout(container.getLeft(), container.getTop(), container.getRight(), container.getBottom());
-            update(container, true);
+            if (enabled) update(container, true);
         } finally { preparingScene = false; }
     }
     void update(ViewGroup container, boolean enabled) {
@@ -205,7 +218,10 @@ final class NativeInstantCameraCard {
         stopTouch(container);
     }
     void refresh(boolean enabled) {
-        for (ViewGroup container : new ArrayList<>(containers.keySet())) if (container != null) update(container, enabled);
+        for (ViewGroup container : new ArrayList<>(containers.keySet())) if (container != null) {
+            applySpacing(container);
+            update(container, enabled);
+        }
     }
     void restore() {
         for (FrameLayout view : new ArrayList<>(owned.keySet())) if (view != null) release(view);

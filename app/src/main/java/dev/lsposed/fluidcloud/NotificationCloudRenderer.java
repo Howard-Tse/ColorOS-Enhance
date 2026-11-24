@@ -15,6 +15,10 @@ interface NotificationCloudRenderer {
         update(notifications, rules, Set.of());
     }
     boolean available();
+    default boolean supportsGroupPager() { return false; }
+    default void showShadePage(NotificationShadePages.Page page) throws ReflectiveOperationException {
+        throw new UnsupportedOperationException("Native grouped media layout unavailable");
+    }
     int capsuleWidthLimit(View view);
     boolean open(String key);
     void closeCard(Runnable continuation);

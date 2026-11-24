@@ -81,11 +81,11 @@ public class GitHubUpdateClientTest {
         JSONObject missingApk = release("74", "1.34.0", true).put("assets", new JSONArray());
         JSONObject draft = release("73", "1.33.0", true).put("draft", true);
         JSONArray releases = new JSONArray().put(missingApk).put(draft)
-                .put(release("71", "1.32.0", true)).put(new JSONObject(release()))
+                .put(release("71", "1.32.0", true)).put(release("70", "1.31.0", false))
                 .put(release("72", "1.32.1", true));
         Fake connection = new Fake(200, releases.toString());
         var result = new GitHubUpdateClient(url -> {
-            assertEquals(ReleaseInfo.RELEASES_API_URL + "?per_page=10", url);
+            assertEquals("https://api.github.com/repos/Howard-Tse/ColorOS-Enhance/releases?per_page=10", url);
             return connection;
         }).check(true);
         assertTrue(connection.disconnected);
@@ -98,11 +98,11 @@ public class GitHubUpdateClientTest {
         assertTrue(ReleaseInfo.latestListed(new JSONArray().put(preview).toString()).prerelease());
         for (String stableCode : new String[]{"72", "73"}) {
             JSONObject stable = release(stableCode, "1.32.2", false);
-            assertEquals(ReleaseInfo.parse(stable.toString()),
+            assertEquals(ReleaseInfo.latestListed(new JSONArray().put(stable).toString()),
                     ReleaseInfo.latestListed(new JSONArray().put(preview).put(stable).toString()));
         }
         preview.put("prerelease", false);
-        ReleaseInfo promoted = ReleaseInfo.parse(preview.toString());
+        ReleaseInfo promoted = ReleaseInfo.latestListed(new JSONArray().put(preview).toString());
         assertFalse(promoted.prerelease());
         assertFalse(promoted.newerThan(72));
         assertEquals(promoted, ReleaseInfo.latestListed(new JSONArray().put(preview).toString()));
@@ -117,9 +117,19 @@ public class GitHubUpdateClientTest {
         assertFalse(result.release().prerelease());
     }
     private static JSONObject release(String code, String name, boolean prerelease) throws JSONException {
-        return new JSONObject(release().replace("70-1.31.0", code + "-" + name)
+        return new JSONObject(release().replace(ReleaseInfo.MODULE_URL, ReleaseInfo.SOURCE_URL).replace("70-1.31.0", code + "-" + name)
                 .replace("coloros-enhance-1.31.0.apk", "coloros-enhance-" + name + ".apk"))
                 .put("prerelease", prerelease);
+    }
+    @Test public void repositoryLinksAreBoundToTheFeedEvenWhenBothReposAreTrusted() throws Exception {
+        JSONObject source = release("78", "1.32.6", true);
+        ReleaseInfo valid = ReleaseInfo.latestListed(new JSONArray().put(source).toString());
+        assertTrue(valid.apkUrl().startsWith(ReleaseInfo.SOURCE_RELEASES_URL + "/download/"));
+        assertThrows(JSONException.class, () -> ReleaseInfo.parse(new JSONObject(source.toString())
+                .put("prerelease", false).toString()));
+        JSONObject asset = source.getJSONArray("assets").getJSONObject(0);
+        asset.put("browser_download_url", asset.getString("browser_download_url").replace(ReleaseInfo.SOURCE_URL, ReleaseInfo.MODULE_URL));
+        assertNull(ReleaseInfo.latestListed(new JSONArray().put(source).put(new JSONObject(release())).toString()));
     }
     @Test public void keepsRenderedNotesAndFallsBackWithoutTruncatingHtmlTags() throws Exception {
         JSONObject response = new JSONObject(release()).put("body", "### 版本说明")

@@ -12,7 +12,7 @@ public final class SettingsLayout {
             new Page("cloud_notification_apps","cloud","逐应用设置","名单、浮窗打开与渠道规则","","cloud_notifications"),
             new Page("cloud_media","cloud","媒体与实时律动","媒体常驻、六频段与采样参数","media","cloud"),
             new Page("cloud_capsule","cloud","小胶囊与交互","尺寸、位置、圆角、边框、循环切换与点击","capsule","cloud"),
-            new Page("cloud_cards","cloud","展开卡片","圆角、摄像头区域展开与背景压暗","camera","cloud"),
+            new Page("cloud_cards","cloud","展开卡片","卡片间距、圆角、摄像头区域展开与背景压暗","camera","cloud"),
             new Page("cloud_scenes","cloud","场景与方向","状态栏解绑、锁屏动画与横竖屏场景","scenes","cloud"),
             new Page("cloud_portrait","cloud","竖屏场景","全屏、最近任务、下拉与其他场景","scenes","cloud_scenes"),
             new Page("cloud_landscape","cloud","横屏场景","独立配置，或沿用竖屏选择","scenes","cloud_scenes"),

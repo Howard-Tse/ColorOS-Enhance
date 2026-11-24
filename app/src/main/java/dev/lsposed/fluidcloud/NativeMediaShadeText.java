@@ -7,6 +7,9 @@ import io.github.libxposed.api.XposedInterface;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.List;
 
 /** Reuses the OEM text and lyric updates when a native media notification row is shown unlocked. */
@@ -15,22 +18,35 @@ final class NativeMediaShadeText {
     private static final String COLLECT = MEDIA + "MediaPlayerSection$updatePageContent$1$";
 
     private record Firmware(String section, String model, String keyguard, String sectionState,
-                            String textCollector, String lyricCollector, String textUpdate, String lyricUpdate) { }
-    private static final Firmware CURRENT = new Firmware("x1", "l", "P", "d", "8$2", "11$2", "Q", "L");
-    private static final Firmware EARLIER = new Firmware("s1", "k", "O", "c", "7$2", "10$2", "O", "J");
+                            String textCollector, String lyricCollector, String textUpdate, String lyricUpdate,
+                            String showingLyrics, String immersive, String lyricLines) { }
+    private static final Firmware CURRENT = new Firmware("x1", "l", "P", "d", "8$2", "11$2", "Q", "L", "g0", "R", "p");
+    private static final Firmware EARLIER = new Firmware("s1", "k", "O", "c", "7$2", "10$2", "O", "J", "d0", "Q", "o");
 
     private final HookEntry module;
     private final Field model, keyguardFlow, sectionState;
     private final Method view, notification, keyguardValue, alternateFlow, alternateValue;
     private final Observer metadata, position;
+    private final Set<Object> sections = Collections.newSetFromMap(new WeakHashMap<>());
+    private final LyricMode lyricMode;
     private boolean observed;
 
-    static void install(HookEntry module, ClassLoader loader, List<XposedInterface.HookHandle> handles)
+    record LyricMode(Field showing, Field immersive, Field lines) {
+        boolean needsMetadata(Object section, Object vm, Method value) {
+            if (Boolean.TRUE.equals(Reflect.get(showing, section))) return false;
+            if (Boolean.TRUE.equals(Reflect.call(value, Reflect.get(immersive, vm)))) return false;
+            Object data = Reflect.call(value, Reflect.get(lines, vm));
+            return data instanceof List<?> timed && !timed.isEmpty();
+        }
+    }
+
+    static NativeMediaShadeText install(HookEntry module, ClassLoader loader, List<XposedInterface.HookHandle> handles)
             throws ReflectiveOperationException {
         NativeMediaShadeText adapter;
         try { adapter = new NativeMediaShadeText(module, loader, CURRENT); }
         catch (ReflectiveOperationException unavailable) { adapter = new NativeMediaShadeText(module, loader, EARLIER); }
         adapter.install(handles);
+        return adapter;
     }
 
     private NativeMediaShadeText(HookEntry module, ClassLoader loader, Firmware firmware) throws ReflectiveOperationException {
@@ -44,6 +60,14 @@ final class NativeMediaShadeText {
         alternateValue = alternateFlow.getReturnType().getMethod("getValue");
         view = Reflect.method(section, "h", ViewGroup.class);
         notification = Reflect.method(section, "o", boolean.class);
+        // Optional on other ROMs. Both the mode and timed lines use the same native state-flow type.
+        LyricMode mode;
+        try {
+            mode = new LyricMode(Reflect.field(section, firmware.showingLyrics, boolean.class),
+                    Reflect.field(model.getType(), firmware.immersive, keyguardFlow.getType()),
+                    Reflect.field(model.getType(), firmware.lyricLines, keyguardFlow.getType()));
+        } catch (NoSuchFieldException unavailable) { mode = null; }
+        lyricMode = mode;
         metadata = new Observer(loader, section, firmware.textCollector, firmware.textUpdate, false);
         position = new Observer(loader, section, firmware.lyricCollector, firmware.lyricUpdate, true);
     }
@@ -66,6 +90,19 @@ final class NativeMediaShadeText {
         }
         handles.addAll(installed);
         module.report(DiagnosticPoint.MEDIA_SHADE_TEXT, DiagnosticPoint.State.INSTALLED);
+    }
+
+    // Native metadata can arrive while the row still belongs to keyguard. Replay it once
+    // when the shade takes ownership, including for paused tracks with no position ticks.
+    void restoreRow(View row) {
+        try {
+            for (Object section : sections) {
+                View content = (View) Reflect.call(view, section);
+                if (module.mediaShadeRow(content) == row) Reflect.call(metadata.render, section, true);
+            }
+        } catch (RuntimeException | LinkageError failure) {
+            module.report(DiagnosticPoint.MEDIA_SHADE_TEXT, DiagnosticPoint.State.FAILED);
+        }
     }
 
     private final class Observer {
@@ -91,9 +128,11 @@ final class NativeMediaShadeText {
         }
 
         void update(Object collector) {
-            if (!module.mediaShadeActive()) return;
+            if (!module.mediaShadeEnabled()) return;
             try {
                 Object section = Reflect.get(owner, collector);
+                if (!positionOnly && (boolean) Reflect.call(notification, section)) sections.add(section);
+                if (!module.mediaShadeActive()) return;
                 View row = module.mediaShadeRow((View) Reflect.call(view, section));
                 if (row == null || !(boolean) Reflect.call(notification, section)) return;
                 boolean shown = row.isShown() && row.hasWindowFocus();
@@ -102,10 +141,11 @@ final class NativeMediaShadeText {
                 boolean keyguard = Boolean.TRUE.equals(Reflect.call(keyguardValue, Reflect.get(keyguardFlow, vm)));
                 Object fallback = Reflect.call(alternateFlow, Reflect.get(sectionState, vm));
                 boolean nativeUpdate = Boolean.TRUE.equals(Reflect.call(alternateValue, fallback));
-                if (!needsReplay(keyguard, nativeUpdate, positionOnly, shown)) return;
-                // Read the live view model through the original renderer. A hidden row can
-                // take a metadata change immediately without animating offscreen.
-                Reflect.call(render, section, !shown);
+                boolean restore = positionOnly && !keyguard && lyricMode != null && lyricMode.needsMetadata(section, vm, keyguardValue);
+                if (!restore && !needsReplay(keyguard, nativeUpdate, positionOnly, shown)) return;
+                // Only the metadata renderer can switch the native title back into lyric mode.
+                // Once restored, ordinary position updates keep using the cheaper lyric renderer.
+                Reflect.call(restore ? metadata.render : render, section, restore || !shown);
                 if (!observed) {
                     observed = true;
                     module.report(DiagnosticPoint.MEDIA_SHADE_TEXT, DiagnosticPoint.State.ACTIVE);

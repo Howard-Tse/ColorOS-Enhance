@@ -284,6 +284,11 @@ public final class HookEntry extends XposedModule {
 
     boolean mediaShadeActive() { return mediaShade != null && mediaShade.active(); }
 
+    boolean mediaShadeEnabled() { return mediaShadeEnabled; }
+    void restoreShadeContent(android.view.View row) {
+        if (extras != null) extras.restoreShadeContent(row);
+    }
+
     android.view.View mediaShadeRow(android.view.View content) {
         return mediaShade == null ? null : mediaShade.ownedRow(content);
     }

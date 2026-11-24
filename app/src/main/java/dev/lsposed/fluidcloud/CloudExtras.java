@@ -97,6 +97,12 @@ final class CloudExtras {
     private void scheduleHostRefresh() {
         if (!main.hasCallbacks(refreshHost)) main.post(refreshHost);
     }
+    void restoreShadeContent(View row) {
+        for (Session session : sessions) {
+            if (session.shadeText != null) session.shadeText.restoreRow(row);
+            if (session.shadePager != null) session.shadePager.restoreRow(row);
+        }
+    }
     int overflowY(View root) {
         for (Session session : sessions) {
             if (session.position != null && session.roots.contains(root)) return session.position.overflowY(root);
@@ -115,6 +121,8 @@ final class CloudExtras {
         NativeCardDim dim;
         NativeCardDismissal dismissal;
         NativeMediaWave wave;
+        NativeMediaShadeText shadeText;
+        NativeMediaShadePager shadePager;
         final View root;
         final android.view.ViewTreeObserver.OnGlobalLayoutListener waveLayout=()->{
             if(wave!=null)wave.layoutChanged();
@@ -122,9 +130,13 @@ final class CloudExtras {
         boolean closing;
         Session(View root){
             this.root=root;loader=root.getClass().getClassLoader();NativeCapsuleAppearance.Lookup lookup=name->Reflect.type(loader,name);
-            try { NativeMediaShadeText.install(module, loader, hooks); }
+            try { shadeText = NativeMediaShadeText.install(module, loader, hooks); }
             catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
                 module.report(DiagnosticPoint.MEDIA_SHADE_TEXT, DiagnosticPoint.State.UNSUPPORTED);
+            }
+            try { shadePager = NativeMediaShadePager.install(module, loader, hooks); }
+            catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+                module.info("Media shade pager unavailable; native paging retained");
             }
             if(module.mediaWaves!=null)try{
                 wave=module.mediaWaves.addPlugin(loader,root);root.getViewTreeObserver().addOnGlobalLayoutListener(waveLayout);

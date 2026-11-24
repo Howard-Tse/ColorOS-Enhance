@@ -23,6 +23,7 @@ final class NativeCameraCard {
     final Class<?> containerType, cardType, rootType;
     final Method layout, measure, cardLayout, intrinsicHeight, centers, detach, rootUpdate, windowAdd, blurBounds, outline, foreground, cardAlpha;
     final boolean legacy;
+    final NativeCardSpacing spacing = new NativeCardSpacing();
     private final Field capsuleRect, content, outlineRect;
     final Field windowRoot;
     private final Method adapterPosition, layoutPosition;
@@ -183,6 +184,7 @@ final class NativeCameraCard {
         return result;
     }
     void afterNativeLayout(ViewGroup container, boolean enabled) {
+        spacing.afterListLayout(container);
         // The original method has just written a fresh OEM value; never subtract twice.
         float nativeY = container.getTranslationY();
         Plan plan = enabled ? geometry(container, nativeY) : null;
@@ -294,7 +296,7 @@ final class NativeCameraCard {
         }
         return 0;
     }
-    private int itemPosition(Object container, View card) {
+    int itemPosition(Object container, View card) {
         int index = (int) Reflect.call(adapterPosition, container, card);
         if (index < 0) index = (int) Reflect.call(layoutPosition, container, card);
         if (index >= 0) { stablePositions.put(card, index); return index; }
@@ -524,6 +526,10 @@ final class NativeCameraCard {
         }
         if (inset == 0) margins.remove(child);
         else margins.put(child, new Margin(nativeTop, top));
+    }
+    void measureSpacing(View card) {
+        if (spacing.hasPadding() && containerType.isInstance(card.getParent()))
+            spacing.template((View) Reflect.get(content, card));
     }
     void afterLayout(View card, boolean enabled) {
         ViewParent parent = card.getParent();
@@ -944,6 +950,16 @@ final class NativeCameraCard {
             container.requestLayout();
         }
         if (!enabled) { restoreSurfaces(null); restoreBackgrounds(null); restoreMargins(); }
+    }
+    void refreshContentSpacing() {
+        if (!spacing.hasPadding()) return;
+        for (ViewGroup container : new ArrayList<>(positions.keySet())) {
+            if (container == null) continue;
+            for (int i = 0; i < container.getChildCount(); i++) {
+                View row = container.getChildAt(i);
+                if (cardType.isInstance(row)) measureSpacing(row);
+            }
+        }
     }
     void detached(ViewGroup container) {
         var check = ownershipChecks.remove(container);

@@ -40,8 +40,10 @@ final class NativeNotificationMenu {
                 if (target == null || STOCK_SETTINGS.equals(target.getAction()) || MODULE_SCHEME.equals(target.getScheme())) continue;
                 next.add(existing);
             }
+            var page = feature.shadePages.current(selected);
+            String member = page == null ? selected : page.member().key();
             for (var command : actions.nativeMenu(selected))
-                next.add(item.newInstance(selected, null, command.label(), actions.menuIntent(selected, command)));
+                next.add(item.newInstance(selected, null, command.label(), actions.menuIntent(member, command)));
             if (!next.isEmpty()) Reflect.call(setRows, model, next);
             return chain.proceed();
         });

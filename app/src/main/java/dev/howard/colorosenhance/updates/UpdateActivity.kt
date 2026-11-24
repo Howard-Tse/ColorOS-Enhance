@@ -89,7 +89,7 @@ private fun UpdateScreen(activity: UpdateActivity) {
                                 includePrereleases = include
                                 result = null
                                 loading = true
-                            }, "优先检查预发布版本", summary = "开启后可收到比正式版更新的预发布版。关闭时只检查正式版。")
+                            }, "优先检查预发布版本", summary = "开启后从 GitHub 源码仓库检查预发布版和正式版。关闭时只检查正式版。")
                         }
                     }
                     item("status") {
@@ -120,8 +120,9 @@ private fun UpdateScreen(activity: UpdateActivity) {
                     }
                     item("links") {
                         Card(Modifier.fillMaxWidth()) {
-                            BasicComponent(title = "查看发布页", summary = "GitHub · LSPosed 模块仓库", onClick = {
-                                UpdateLinks.browser(activity, release?.pageUrl() ?: ReleaseInfo.RELEASES_URL)
+                            val pageUrl = release?.pageUrl() ?: if (includePrereleases) ReleaseInfo.SOURCE_RELEASES_URL else ReleaseInfo.RELEASES_URL
+                            BasicComponent(title = "查看发布页", summary = if (pageUrl.startsWith(ReleaseInfo.SOURCE_RELEASES_URL)) "GitHub · 源码仓库" else "GitHub · LSPosed 模块仓库", onClick = {
+                                UpdateLinks.browser(activity, pageUrl)
                             })
                             BasicComponent(title = "GitHub 仓库", summary = "源码、使用说明与问题反馈", onClick = { UpdateLinks.repository(activity) })
                         }

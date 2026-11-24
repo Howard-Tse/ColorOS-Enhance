@@ -55,6 +55,92 @@ public class NotificationCloudGroupingTest {
                 android.os.Process.myUserHandle(), id);
     }
 
+    @Test public void shadeStartsAtNewestAndFollowsTheSelectedNotificationThroughUpdates() {
+        var pages = new NotificationShadePages();
+        var a = item("app", 1, "thread");
+        var b = item("app", 2, "thread");
+        var c = item("app", 3, "thread");
+        var first = pages.resolve(List.of(a, b, c), false);
+        assertEquals(1, first.number());
+        assertSame(c, first.member());
+        assertNull(first.step(-1));
+        var next = first.step(1);
+        pages.turned(next);
+        assertEquals(2, next.number());
+        assertSame(b, next.member());
+        assertNull(next.step(1).step(1));
+        var newer = item("app", 4, "thread");
+        var changed = pages.resolve(List.of(b, c, newer), false);
+        assertSame(b, changed.member());
+        assertEquals(3, changed.number());
+        assertFalse(changed.sameContent(next));
+        assertFalse(pages.resolve(List.of(updated(b), c, newer), false).sameContent(changed));
+        assertTrue(pages.resolve(List.of(b, updated(c), newer), false).sameContent(changed));
+    }
+
+    @Test public void lockscreenOnlyPagesThroughTheAllowedProjection() {
+        var pages = new NotificationShadePages();
+        var a = item("app", 1, "thread");
+        var b = item("app", 2, "thread");
+        var c = item("app", 3, "thread");
+        pages.turned(pages.resolve(List.of(a, b, c), false).step(1));
+        var locked = pages.resolve(List.of(a, c), true);
+        assertEquals(1, locked.number());
+        assertSame(a, locked.step(1).member());
+        assertNull(locked.step(1).step(1));
+        assertNull(pages.resolve(List.of(c), true));
+        pages.bind(a.key(), locked);
+        pages.retain(java.util.Set.of(a.key()));
+        assertSame(c, pages.resolve(List.of(a, b, c), false).member());
+        pages.retain(java.util.Set.of());
+        assertTrue(pages.isEmpty());
+    }
+
+    @Test public void pageKeepsRowIdentityButBindsTheDisplayedMembersContentAndActions() {
+        var first = item("app", 1, "thread");
+        var middle = item("app", 2, "thread");
+        var last = item("app", 3, "thread");
+        var group = List.of(first, middle, last);
+        for (var entry : group) {
+            var n = entry.value().getNotification();
+            n.extras.putCharSequence(Notification.EXTRA_TEXT, entry.key());
+            n.contentIntent = android.app.PendingIntent.getActivity(RuntimeEnvironment.getApplication(),
+                    entry.value().getId(), new android.content.Intent("open"), android.app.PendingIntent.FLAG_IMMUTABLE);
+            n.actions = new Notification.Action[]{new Notification.Action.Builder(null, "按钮", n.contentIntent).build()};
+        }
+        var page = new NotificationShadePages().resolve(group, true).step(1);
+        var rendered = NotificationCloudActions.copyMember(group, page);
+        assertEquals(first.key(), rendered.getKey());
+        var n = rendered.getNotification();
+        NotificationLockscreenCards.preparePreview(n);
+        assertEquals(middle.key(), n.extras.getCharSequence(Notification.EXTRA_TEXT));
+        assertEquals("Test", n.extras.getCharSequence(Notification.EXTRA_TITLE));
+        assertEquals(middle.value().getNotification().contentIntent, n.contentIntent);
+        assertEquals(n.contentIntent, n.actions[0].actionIntent);
+        assertEquals("Test", middle.value().getNotification().extras.getCharSequence(Notification.EXTRA_TITLE));
+        assertEquals(last.key(), NotificationCloudActions.copyMember(group, null).getNotification().extras.getCharSequence(Notification.EXTRA_TEXT));
+    }
+
+    @Test public void mapsNativeZeroBasedPagesToTheirNotificationWithoutChangingTheTitle() {
+        var a = item("app", 1, null);
+        var b = item("app", 2, null);
+        var c = item("app", 3, null);
+        var group = new NotificationShadePages().resolve(List.of(a, b, c), false);
+        assertSame(c, group.at(0).member());
+        assertSame(b, group.at(1).member());
+        assertSame(a, group.at(2).member());
+        assertEquals(3, group.at(2).number());
+        assertEquals(group.rowKey(), group.at(1).rowKey());
+    }
+
+    @Test public void mediaPageScaleIsSymmetricWhenReversingAndReturnsToFullSize() {
+        assertEquals(1f, NativeNotificationShadePaging.mediaScale(0f), .0001f);
+        assertEquals(.8f, NativeNotificationShadePaging.mediaScale(.5f), .0001f);
+        assertEquals(.9f, NativeNotificationShadePaging.mediaScale(.075f), .0001f);
+        assertEquals(.9f, NativeNotificationShadePaging.mediaScale(.925f), .0001f);
+        assertEquals(1f, NativeNotificationShadePaging.mediaScale(1f), .0001f);
+    }
+
     @Test public void navigateToMatchingNativeSummaryEvenWithOtherGroupsPresent() {
         var summary = grouped(1, "group", true);
         var a = grouped(2, "group", false);

@@ -64,6 +64,12 @@ final class CameraCardExpansion {
             NativeCardGlass glass = null;
             try {
                 NativeCameraCard nativeCard = new NativeCameraCard(loader);
+                nativeCard.spacing.configure(module.config.cardSpacing());
+                try {
+                    nativeCard.spacing.installGap(module, nativeCard, hooks);
+                } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+                    module.error("Native card list gap unavailable", unavailable);
+                }
                 nativeCard.onFailure = this::geometryFailed;
                 NativeCardCorners corners = new NativeCardCorners(() -> module.config.corners().card());
                 int cornerHooks = hooks.size();
@@ -80,6 +86,33 @@ final class CameraCardExpansion {
                     module.error("Native long-press card preview corners unavailable", unavailable);
                 }
                 NativeInstantCameraCard instant = installInstant(loader, nativeCard, hooks);
+                if (instant == null) {
+                    int start = hooks.size();
+                    try { nativeCard.spacing.installStandaloneInstant(module, nativeCard, hooks); }
+                    catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+                        while (hooks.size() > start) hooks.removeLast().unhook();
+                        module.info("Native instant card spacing unavailable");
+                    }
+                }
+                try {
+                    Class<?> media = Reflect.type(loader, "com.oplus.systemui.plugins.shared.template.section.media.MediaPlayerCardPageRootView");
+                    Method measureMedia = media.getDeclaredMethod("onMeasure", int.class, int.class);
+                    hooks.add(module.hook(measureMedia).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
+                        if (nativeCard.spacing.hasPadding()) {
+                            ViewGroup page = (ViewGroup) chain.getThisObject();
+                            for (View node = page; node != null; node = node.getParent() instanceof View parent ? parent : null) {
+                                if (nativeCard.cardType.isInstance(node) && nativeCard.containerType.isInstance(node.getParent())
+                                        || instant != null && instant.isExpandedBody(node)) {
+                                    nativeCard.spacing.mediaMeasure(page);
+                                    break;
+                                }
+                            }
+                        }
+                        return chain.proceed();
+                    }));
+                } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+                    module.info("Native media card padding adapter unavailable");
+                }
                 if (!nativeCard.legacy) {
                     try {
                         glass = new NativeCardGlass(module, () -> module.config.corners().card(), nativeCard,
@@ -104,8 +137,11 @@ final class CameraCardExpansion {
                 }));
                 hooks.add(module.hook(nativeCard.measure).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
                     if (!failed && nativeCard.cardType.isInstance(chain.getThisObject())
-                            && Looper.myLooper() == Looper.getMainLooper()) safe(() ->
-                            nativeCard.beforeMeasure((View) chain.getThisObject(), enabled()));
+                            && Looper.myLooper() == Looper.getMainLooper()) {
+                        View card = (View) chain.getThisObject();
+                        safe(() -> nativeCard.beforeMeasure(card, enabled()));
+                        nativeCard.measureSpacing(card);
+                    }
                     return chain.proceed();
                 }));
                 hooks.add(module.hook(nativeCard.intrinsicHeight).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
@@ -221,6 +257,7 @@ final class CameraCardExpansion {
                     Object result = chain.proceed();
                     if (!failed && Looper.myLooper() == Looper.getMainLooper())
                         safe(() -> { ViewGroup container = (ViewGroup) chain.getThisObject();
+                            instant.applySpacing(container);
                             if (method.equals(instant.state)) instant.afterStateChange(container, enabled());
                             else { instant.nativeChanged(container); instant.update(container, enabled()); }
                             trace(cards, "instantState", chain.getThisObject()); });
@@ -312,6 +349,7 @@ final class CameraCardExpansion {
     }
     private void release(ClassLoader loader) {
         for (Installed installed : new ArrayList<>(contracts)) if (installed.loader() == loader) {
+            installed.contract().spacing.configure(CardSpacing.OEM);
             safe(() -> { if (installed.instant() != null) installed.instant().restore(); installed.contract().restore(); });
             if (installed.glass() != null) installed.glass().close();
             for (var hook : installed.hooks()) hook.unhook();
@@ -322,6 +360,8 @@ final class CameraCardExpansion {
     void configurationChanged() {
         main.post(() -> { if (!failed) for (Installed installed : contracts)
             safe(() -> {
+                if (installed.contract().spacing.configure(module.config.cardSpacing()))
+                    installed.contract().refreshContentSpacing();
                 if (installed.instant() != null) installed.instant().refresh(enabled());
                 installed.contract().refresh(enabled());
             }); });

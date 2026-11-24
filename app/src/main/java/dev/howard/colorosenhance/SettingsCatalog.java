@@ -3,6 +3,7 @@ package dev.howard.colorosenhance;
 import dev.howard.colorosenhance.notifications.NotificationCloudRules;
 import dev.lsposed.fluidcloud.CapsulePosition;
 import dev.lsposed.fluidcloud.CloudCorners;
+import dev.lsposed.fluidcloud.CardSpacing;
 import dev.lsposed.fluidcloud.MediaWaveBands;
 import dev.lsposed.fluidcloud.MediaWaveOptions;
 import java.util.List;
@@ -136,6 +137,10 @@ public final class SettingsCatalog {
                 "card_corner_dp",28,0,CloudCorners.CARD_RADIUS_MAX_DP,1,1,"dp"));
         items.add(flag("展开卡片","card_continuous_corners","展开卡片连续圆角",
                 "启用自定义圆角后，使直边与弯曲边缘平滑衔接。重新展开卡片后生效。"));
+        addCardSpacing(items, CardSpacing.SIDE, "卡片左右外边距", "调整卡片两侧到屏幕边缘的距离。");
+        addCardSpacing(items, CardSpacing.GAP, "卡片间距", "从第二张卡片起调整与上一张的距离。");
+        addCardSpacing(items, CardSpacing.HORIZONTAL, "内容水平内边距", "调整卡片正文左右的留白，可缩小的幅度取决于模板。");
+        addCardSpacing(items, CardSpacing.VERTICAL, "内容垂直内边距", "调整正文上下的留白，首张卡片仍会避让摄像头。");
         items.add(flag("场景控制","unbind_status_bar","流体云与状态栏解绑",
                 "开启后重启系统界面。可在下方为竖屏或横屏选择「保持显示」或「动画补全」。未配置的场景仍跟随系统。动态胶囊可能增加耗电。"));
         items.add(flag("场景控制","capsule_lock_exit","锁屏时收缩胶囊",
@@ -149,6 +154,10 @@ public final class SettingsCatalog {
                 "开启后横屏沿用竖屏的全部场景设置；关闭后单独配置横屏，已保存的横屏选项会保留。"));
         addOrientationScenes(items, "横屏", "landscape_");
         return List.copyOf(items);
+    }
+    private static void addCardSpacing(List<Item> items, String key, String title, String description) {
+        items.add(value("展开卡片", key, title, description + " 正值增加，负值减少，0 dp 恢复原厂。",
+                key, 0, CardSpacing.MIN, CardSpacing.MAX, 1, 1, "dp"));
     }
     private static Item waveNumber(String key,String title,String description,int fallback,int min,int max,int step,String unit){
         return new Item("媒体实时律动参数",key,title,description,false,key,fallback,min,max,step,1,unit,
@@ -198,7 +207,7 @@ public final class SettingsCatalog {
                 || List.of("hide_capsule_stroke","hide_capsule_arrows","capsule_keep_in_foreground","skip_empty_capsule","card_dim_enabled",
                         "capsule_corners_enabled","card_corners_enabled","capsule_size_enabled","capsule_offset_x_dp","capsule_offset_y_dp",
                         "capsule_landscape_offset_x_dp","capsule_landscape_offset_y_dp",
-                        "selected_card_first").contains(key)
+                        "selected_card_first", CardSpacing.SIDE, CardSpacing.GAP, CardSpacing.HORIZONTAL, CardSpacing.VERTICAL).contains(key)
                 || Boolean.TRUE.equals(values.get("unbind_status_bar"));
     }
     public static boolean sectionVisible(Group group, String section, Map<String, ?> values) {

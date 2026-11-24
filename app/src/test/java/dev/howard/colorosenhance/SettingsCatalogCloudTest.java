@@ -8,6 +8,19 @@ import java.util.Map;
 import static org.junit.Assert.*;
 
 public class SettingsCatalogCloudTest {
+    @Test public void expandedCardSpacingIsNumericAndIndependentOfUnbindAndCorners() {
+        for (String key : List.of("card_side_margin_dp", "card_gap_dp", "card_content_horizontal_dp", "card_content_vertical_dp")) {
+            var option = item(key);
+            assertEquals("展开卡片", option.section());
+            assertTrue(option.valueOnly());
+            assertEquals(0, option.valueDefault());
+            assertTrue(SettingsCatalog.controlEnabled("cloud", key, Map.of("enabled", true)));
+            assertFalse(SettingsCatalog.controlEnabled("cloud", key, Map.of()));
+            assertTrue(SettingsCoordinator.validValue("cloud", key, -32));
+            assertTrue(SettingsCoordinator.validValue("cloud", key, 48));
+            assertFalse(SettingsCoordinator.validValue("cloud", key, 49));
+        }
+    }
     @Test public void newChoicesAreSharedOptInControlsIndependentOfUnbindAndNumericWritesAreBounded(){
         var values=Map.<String,Object>of("enabled",true);
         for(String key:List.of("realtime_media_wave","hide_capsule_stroke","hide_capsule_arrows","capsule_keep_in_foreground","skip_empty_capsule","card_dim_enabled",
@@ -27,7 +40,8 @@ public class SettingsCatalogCloudTest {
                 "capsule_corners_enabled", "capsule_continuous_corners", "capsule_keep_in_foreground",
                 "capsule_offset_x_dp", "capsule_offset_y_dp", "capsule_landscape_offset_x_dp", "capsule_landscape_offset_y_dp",
                 "skip_empty_capsule", "block_capsule_click_top", "selected_card_first", "camera_card_expansion", "card_dim_enabled",
-                "card_corners_enabled", "card_continuous_corners", "unbind_status_bar", "capsule_lock_exit",
+                "card_corners_enabled", "card_continuous_corners", "card_side_margin_dp", "card_gap_dp",
+                "card_content_horizontal_dp", "card_content_vertical_dp", "unbind_status_bar", "capsule_lock_exit",
                 "capsule_on_top", "capsule_keep_during_launch", "fullscreen", "fullscreen_animation",
                 "recents", "recents_shrink", "shade_keep", "shade_collapse_on_open", "other_keep", "other_animation",
                 "landscape_follow_portrait", "landscape_fullscreen", "landscape_fullscreen_animation", "landscape_recents", "landscape_recents_shrink",

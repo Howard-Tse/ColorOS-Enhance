@@ -13,7 +13,7 @@ public record CloudConfig(boolean enabled, SceneChoice fullscreen,
                          boolean dimEnabled, int dimPercent, boolean realtimeMediaWave, MediaWaveOptions waveOptions,
                          boolean capsuleOnTop, boolean keepDuringLaunch, CloudCorners corners,
                          CapsuleSize size, CapsulePosition portraitPosition, CapsulePosition landscapePosition,
-                         boolean selectedCardFirst, boolean lockExit) {
+                         boolean selectedCardFirst, boolean lockExit, CardSpacing spacing) {
         static final Extras OEM = new Extras(false,false,false,false,30);
         public Extras(boolean hideStroke,boolean hideArrows,boolean skipEmpty,boolean dimEnabled,int dimPercent){
             this(hideStroke,hideArrows,skipEmpty,dimEnabled,dimPercent,false);
@@ -26,7 +26,7 @@ public record CloudConfig(boolean enabled, SceneChoice fullscreen,
                       boolean realtimeMediaWave,MediaWaveOptions waveOptions,boolean capsuleOnTop,
                       boolean keepDuringLaunch,CloudCorners corners) {
             this(hideStroke,hideArrows,skipEmpty,dimEnabled,dimPercent,realtimeMediaWave,waveOptions,
-                    capsuleOnTop,keepDuringLaunch,corners,CapsuleSize.OEM,CapsulePosition.OEM,CapsulePosition.OEM,false,false);
+                    capsuleOnTop,keepDuringLaunch,corners,CapsuleSize.OEM,CapsulePosition.OEM,CapsulePosition.OEM,false,false,CardSpacing.OEM);
         }
         public Extras { dimPercent = Math.max(0,Math.min(100,dimPercent)); }
     }
@@ -79,7 +79,7 @@ public record CloudConfig(boolean enabled, SceneChoice fullscreen,
                 new Extras(extras.hideStroke(),extras.hideArrows(),extras.skipEmpty(),extras.dimEnabled(),extras.dimPercent(),
                         extras.realtimeMediaWave(),extras.waveOptions(),onTop,extras.keepDuringLaunch(),extras.corners(),
                         extras.size(),extras.portraitPosition(),extras.landscapePosition(),extras.selectedCardFirst(),
-                        extras.lockExit()));
+                        extras.lockExit(),extras.spacing()));
     }
     public CloudConfig(boolean enabled,SceneChoice fullscreen,SceneChoice recents,SceneChoice other,
                        boolean keepPausedMusic,boolean unbindStatusBar,boolean keepShade,boolean collapseShadeOnOpen){
@@ -135,7 +135,7 @@ public record CloudConfig(boolean enabled, SceneChoice fullscreen,
                         !(values.get("capsule_keep_during_launch") instanceof Boolean keep) || keep,CloudCorners.from(values),
                         CapsuleSize.from(values),CapsulePosition.from(values,false),CapsulePosition.from(values,true),
                         Boolean.TRUE.equals(values.get("selected_card_first")),
-                        Boolean.TRUE.equals(values.get("capsule_lock_exit"))));
+                        Boolean.TRUE.equals(values.get("capsule_lock_exit")),CardSpacing.from(values)));
     }
     private static SceneChoice choice(Map<String,?> values,String keep,String animate) {
         return new SceneChoice(Boolean.TRUE.equals(values.get(keep)),Boolean.TRUE.equals(values.get(animate)));
@@ -149,6 +149,7 @@ public record CloudConfig(boolean enabled, SceneChoice fullscreen,
     boolean capsuleOnTop() { return scenesEnabled() && extras.capsuleOnTop(); }
     boolean keepCapsuleDuringLaunch() { return scenesEnabled() && extras.keepDuringLaunch(); }
     CloudCorners corners() { return enabled ? extras.corners() : CloudCorners.OEM; }
+    CardSpacing cardSpacing() { return enabled ? extras.spacing() : CardSpacing.OEM; }
     boolean preventCapsuleClickTop() { return enabled && blockCapsuleClickTop; }
     boolean expandFromCamera() { return enabled && cameraCardExpansion; }
     boolean hideCapsuleStroke() { return enabled && extras.hideStroke(); }

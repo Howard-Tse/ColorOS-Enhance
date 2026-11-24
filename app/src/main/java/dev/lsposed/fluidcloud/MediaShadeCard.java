@@ -106,6 +106,12 @@ final class MediaShadeCard {
     private final class NativeRows {
         private final Method update, initialize, controllers, getEntry, service, getView, getViewState, barMode, invalidate;
         private final Field barState, filter, gone;
+        private final Method boundEntry;
+        private Class<?> styleEntryType;
+        private NativeMediaShadeStyle style;
+        private Object observedBar, barListener;
+        private Method addListener, removeListener;
+        private DiagnosticPoint.State lastStyleReport;
         private WeakReference<Object> manager = new WeakReference<>(null);
         private WeakReference<View> managed = new WeakReference<>(null);
 
@@ -124,12 +130,32 @@ final class MediaShadeCard {
             getEntry = Reflect.method(controller, "getEntry", entry);
             service = Reflect.method(entry, "getServiceId", String.class);
             getView = Reflect.method(controller, "getOplusCustomRow", view);
+            Method rowEntry;
+            try { rowEntry = Reflect.method(view, "getEntry", entry); }
+            catch (NoSuchMethodException unavailable) { rowEntry = null; }
+            boundEntry = rowEntry;
             getViewState = Reflect.method(view, "getViewState", viewState);
             gone = Reflect.field(viewState, "gone", boolean.class);
             barState = Reflect.field(owner, "statusBarStateController", state);
             barMode = Reflect.method(state, "getState", int.class);
             filter = Reflect.field(owner, "mNotifFilter", Object.class);
             invalidate = Reflect.method(filter.getType(), "invalidateList", void.class, String.class);
+            try {
+                Class<?> listener = Reflect.type(loader, state.getName() + "$StateListener");
+                addListener = Reflect.method(state, "addCallback", void.class, listener);
+                removeListener = Reflect.method(state, "removeCallback", void.class, listener);
+                barListener = Reflect.listener(listener, (method, args) -> {
+                    if (!enabled && managed.get() == null) return;
+                    if ("onStateChanged".equals(method.getName())) refresh();
+                    if ("onExpandedChanged".equals(method.getName()) && Boolean.TRUE.equals(args[0])) {
+                        View previous = managed.get();
+                        refresh();
+                        if (previous != null && previous == managed.get() && unlocked()) module.restoreShadeContent(previous);
+                    }
+                });
+            } catch (ReflectiveOperationException unsupported) {
+                module.info("Media shade state listener unavailable; using row updates");
+            }
         }
 
         void install() {
@@ -154,20 +180,88 @@ final class MediaShadeCard {
             Object owner = manager.get();
             if (owner == null) return;
             try {
-                if ((int) Reflect.call(barMode, Reflect.get(barState, owner)) != 0) { managed.clear(); return; }
+                Object bar = Reflect.get(barState, owner);
+                if (barListener != null && observedBar != bar) {
+                    try {
+                        if (observedBar != null) Reflect.call(removeListener, observedBar, barListener);
+                        observedBar = bar;
+                        Reflect.call(addListener, bar, barListener);
+                    } catch (RuntimeException unavailable) {
+                        barListener = null;
+                        module.info("Media shade state callback unavailable; using row updates");
+                    }
+                }
+                if ((int) Reflect.call(barMode, bar) != 0) {
+                    updateStyle(null);
+                    managed.clear();
+                    return;
+                }
                 if (enabled && capsuleAvailable) {
                     View row = mediaRow(owner);
-                    if (row == null) { reportRow(DiagnosticPoint.State.WAITING); return; }
+                    if (row == null) {
+                        updateStyle(null);
+                        managed.clear();
+                        reportRow(DiagnosticPoint.State.WAITING);
+                        return;
+                    }
+                    boolean acquired = managed.get() != row;
+                    if (acquired) managed = new WeakReference<>(row);
+                    updateStyle(row);
                     apply(owner, row, true);
-                    if (managed.get() != row) managed = new WeakReference<>(row);
+                    if (acquired && unlocked()) module.restoreShadeContent(row);
                     reportRow(DiagnosticPoint.State.ACTIVE);
                 } else {
+                    updateStyle(null);
                     View previous = managed.get();
                     managed.clear();
                     if (previous != null) apply(owner, previous, false);
                     if (enabled) reportRow(DiagnosticPoint.State.WAITING);
                 }
             } catch (IllegalAccessException | RuntimeException | LinkageError unavailable) { reportRow(DiagnosticPoint.State.FAILED); }
+        }
+
+        private boolean unlocked() {
+            Object owner = manager.get();
+            if (!active() || owner == null || (int) Reflect.call(barMode, Reflect.get(barState, owner)) != 0) return false;
+            Object sender = controller.get();
+            if (sender == null) return false;
+            KeyguardManager keyguard = ((Context) Reflect.get(context, sender)).getSystemService(KeyguardManager.class);
+            return keyguard != null && !keyguard.isKeyguardLocked();
+        }
+
+        private void updateStyle(View row) {
+            try {
+                if (boundEntry == null) {
+                    if (enabled) reportStyle(DiagnosticPoint.State.UNSUPPORTED);
+                    return;
+                }
+                Object entry = row == null ? null : Reflect.call(boundEntry, row);
+                if (entry == null || !unlocked() || !mediaService(Reflect.call(service, entry))) {
+                    if (style != null) {
+                        style.release();
+                        reportStyle(enabled ? DiagnosticPoint.State.WAITING : DiagnosticPoint.State.NATIVE);
+                    }
+                    return;
+                }
+                if (entry.getClass() != styleEntryType) {
+                    if (style != null) style.close();
+                    style = null;
+                    styleEntryType = entry.getClass();
+                    style = new NativeMediaShadeStyle(module, styleEntryType, this::unlocked);
+                }
+                if (style != null) reportStyle(style.show(entry) ? DiagnosticPoint.State.ACTIVE : DiagnosticPoint.State.WAITING);
+            } catch (ReflectiveOperationException unsupported) {
+                reportStyle(DiagnosticPoint.State.UNSUPPORTED);
+            } catch (RuntimeException | LinkageError failure) {
+                reportStyle(DiagnosticPoint.State.FAILED);
+            }
+        }
+
+        private void reportStyle(DiagnosticPoint.State state) {
+            if (lastStyleReport != state) {
+                lastStyleReport = state;
+                module.report(DiagnosticPoint.MEDIA_SHADE_STYLE, state);
+            }
         }
 
         private View mediaRow(Object owner) {

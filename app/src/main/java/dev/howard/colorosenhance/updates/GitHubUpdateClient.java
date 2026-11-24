@@ -25,7 +25,7 @@ public final class GitHubUpdateClient {
 
     public Result check(boolean includePrereleases) {
         if (includePrereleases) {
-            Result listed = fetch(ReleaseInfo.RELEASES_API_URL + "?per_page=10", ReleaseInfo::latestListed);
+            Result listed = fetch(ReleaseInfo.SOURCE_RELEASES_API_URL + "?per_page=10", ReleaseInfo::latestListed);
             if (listed.release() != null || listed.error() != null) return listed;
         }
         return fetch(ReleaseInfo.API_URL, ReleaseInfo::parse);

@@ -103,33 +103,41 @@ final class NotificationCloudActions {
         return button;
     }
     void retainFloatingButtons(Set<String> liveKeys) { floatingButtons.keySet().retainAll(liveKeys); }
-    @SuppressWarnings("deprecation")
-    StatusBarNotification decorate(List<NotificationCloudStore.Entry<StatusBarNotification>> group, NotificationCloudRules rules) {
+    static StatusBarNotification copyMember(List<NotificationCloudStore.Entry<StatusBarNotification>> group,
+            NotificationShadePages.Page page) {
         StatusBarNotification sbn = group.getFirst().value();
         StatusBarNotification rendered = sbn.clone();
         Notification n = rendered.getNotification();
-        if (group.size() > 1) {
-            Notification latest = group.get(group.size() - 1).value().getNotification();
-            try { Reflect.call(Reflect.method(Notification.class, "cloneInto", void.class, Notification.class, boolean.class), latest, n, true); }
-            catch (ReflectiveOperationException unavailable) { /* Keep the representative's native content if this optional copy is unavailable. */ }
+        var member = page == null ? group.getLast() : page.member();
+        if (member != group.getFirst()) {
+            try { Reflect.call(Reflect.method(Notification.class, "cloneInto", void.class, Notification.class, boolean.class),
+                    member.value().getNotification(), n, true); }
+            catch (ReflectiveOperationException unavailable) { throw new IllegalStateException("Cannot project group member", unavailable); }
         }
         n.extras = new Bundle(n.extras);
-        if (group.size() > 1) {
+        if (group.size() > 1 && page == null) {
             CharSequence title = n.extras.getCharSequence(Notification.EXTRA_TITLE, "通知");
             n.extras.putCharSequence(Notification.EXTRA_TITLE, title + " · " + group.size() + " 条");
         }
+        return rendered;
+    }
+    @SuppressWarnings("deprecation")
+    StatusBarNotification decorate(List<NotificationCloudStore.Entry<StatusBarNotification>> group,
+            NotificationCloudRules rules, NotificationShadePages.Page page) {
+        StatusBarNotification rendered = copyMember(group, page);
+        Notification n = rendered.getNotification();
+        var member = page == null ? group.getLast() : page.member();
         var actions = new ArrayList<Notification.Action>();
         if (n.actions != null) for (Notification.Action item : n.actions) if (item != null && item.getRemoteInputs() == null && !item.isAuthenticationRequired()) {
             if (actions.size() < 2) actions.add(item);
         }
-        var latest = group.getLast();
-        if (feature.unlocked() && rules.floating(latest.app()) && supportsFloating(latest.value())) {
+        if (feature.unlocked() && rules.floating(member.app()) && supportsFloating(member.value())) {
             actions.add(new Notification.Action.Builder((Icon) null, "浮窗打开",
-                    floatingButton(latest.key(), latest.revision(), latest.value().getNotification().contentIntent)).build());
+                    floatingButton(member.key(), member.revision(), member.value().getNotification().contentIntent)).build());
         }
         n.actions = actions.toArray(Notification.Action[]::new);
         applyStyle(context, n, rules.style());
-        removeDuplicateIcon(sbn.getPackageName(), n);
+        removeDuplicateIcon(rendered.getPackageName(), n);
         return rendered;
     }
     private void removeDuplicateIcon(String pkg, Notification notification) {
@@ -195,7 +203,8 @@ final class NotificationCloudActions {
             NotificationCloudGrouping.Identity identity = NotificationCloudGrouping.identity(group.getFirst().value());
             result.add(new MenuAction("查看本组 " + group.size() + " 条通知", () -> feature.openCollectionGroup(identity)));
         }
-        result.addAll(itemActions(group.get(group.size() - 1).key()));
+        var page = feature.shadePages.current(key);
+        result.addAll(itemActions(page == null ? group.getLast().key() : page.member().key()));
         return result;
     }
     private List<MenuAction> itemActions(String key) {

@@ -6,15 +6,15 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-/** Accept only published releases of the public module repository with a matching APK. */
+/** Accept published releases with an APK from the same repository as the selected feed. */
 public record ReleaseInfo(long versionCode, String versionName, String notes, String notesHtml, String pageUrl,
                           String apkUrl, boolean prerelease) {
     public static final String SOURCE_URL = "https://github.com/Howard-Tse/ColorOS-Enhance";
     public static final String MODULE_URL = "https://github.com/Xposed-Modules-Repo/io.github.howard_tse.colorosenhance";
     public static final String RELEASES_URL = MODULE_URL + "/releases";
-    public static final String RELEASES_API_URL = "https://api.github.com/repos/Xposed-Modules-Repo/io.github.howard_tse.colorosenhance/releases";
-    public static final String API_URL = RELEASES_API_URL + "/latest";
-    private static final String PATH = "/Xposed-Modules-Repo/io.github.howard_tse.colorosenhance/releases/";
+    public static final String SOURCE_RELEASES_URL = SOURCE_URL + "/releases";
+    public static final String SOURCE_RELEASES_API_URL = "https://api.github.com/repos/Howard-Tse/ColorOS-Enhance/releases";
+    public static final String API_URL = "https://api.github.com/repos/Xposed-Modules-Repo/io.github.howard_tse.colorosenhance/releases/latest";
     private static final Pattern TAG = Pattern.compile("([1-9][0-9]{0,9})-([0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?)");
 
     public boolean newerThan(long installedCode) { return versionCode > installedCode; }
@@ -52,7 +52,8 @@ public record ReleaseInfo(long versionCode, String versionName, String notes, St
         if (code > Integer.MAX_VALUE) throw new JSONException("Invalid version code");
         String name = match.group(2);
         String page = release.getString("html_url");
-        if (!githubPath(page, PATH + "tag/" + tag)) throw new JSONException("Invalid release link");
+        String path = URI.create(includePrereleases ? SOURCE_RELEASES_URL : RELEASES_URL).getRawPath() + "/";
+        if (!githubPath(page, path + "tag/" + tag)) throw new JSONException("Invalid release link");
         String apkName = "coloros-enhance-" + name + ".apk";
         JSONArray assets = release.getJSONArray("assets");
         String apk = null;
@@ -61,7 +62,7 @@ public record ReleaseInfo(long versionCode, String versionName, String notes, St
             if (!apkName.equals(asset.optString("name")) || !"uploaded".equals(asset.optString("state"))
                     || asset.optLong("size", 0) <= 0) continue;
             String url = asset.getString("browser_download_url");
-            if (githubPath(url, PATH + "download/" + tag + "/" + apkName)) apk = url;
+            if (githubPath(url, path + "download/" + tag + "/" + apkName)) apk = url;
         }
         if (apk == null) throw new JSONException("Release APK unavailable");
         String notes = release.isNull("body") ? "" : release.optString("body", "");

@@ -42,6 +42,7 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
     private boolean readinessQueued;
     private final NativeNotificationCapsule capsule;
     private final NativeShadeNotificationDismissal shadeDismissal;
+    private final NativeNotificationShadePaging paging;
     private record Appearance(NotificationCloudRules.Style style, NotificationCloudRules.CapsuleText text, int limit,
             boolean floating, Map<String, NotificationCloudRules.Floating> appFloating) { }
     private Appearance appearance;
@@ -120,6 +121,13 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
                     : "Native notification auto-expansion uses the system duration", unavailable);
         }
         reminders = nativeReminders;
+        NativeNotificationShadePaging pager = null;
+        if (shadeListener != null) try {
+            pager = new NativeNotificationShadePaging(feature, this, host, root.getContext(), loader);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
+            feature.failure("Stock media group pager unavailable", failure);
+        }
+        paging = pager;
     }
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static Object enumValue(Class<?> type, String name) { return Enum.valueOf((Class) type, name); }
@@ -158,10 +166,16 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
                     rerender = false;
                     version = versions.get(item.key());
                 } else waitingForTouch.remove(item.key());
-                if (model == null || rerender || showShade && panelModel == null) {
-                    StatusBarNotification render = feature.renderNotification(group);
+                var page = feature.shadePage(group, showShade, lockCards);
+                boolean panelChanged = showShade && (panelModel == null || changedAppearance || placementChanged
+                        || (page == null ? rerender || feature.shadePages.current(item.key()) != null
+                                : !page.sameContent(feature.shadePages.current(item.key()))));
+                StatusBarNotification render = null;
+                Object template = null;
+                if (model == null || rerender || panelChanged && page == null) {
+                    render = feature.renderNotification(group);
                     String label = capsule == null ? "" : capsule.caption(render, host, rules, rendering.limit());
-                    Object template = capsule == null ? Reflect.call(parse, parser, render)
+                    template = capsule == null ? Reflect.call(parse, parser, render)
                             : capsule.parse(parse, parser, render, label);
                     if (template == null) {
                         complete = false;
@@ -176,16 +190,17 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
                         models.put(item.key(), model);
                         captions.put(item.key(), label);
                     }
-                    if (showShade) try {
-                        // A separate projection uses the vendor's notification-center entry.
-                        panelModel = updateModel(panelModel, render, template, shadeEntry, false);
-                        shadeModels.put(item.key(), panelModel);
-                    } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
-                        complete = false;
-                        panelModel = null;
-                        feature.failure("Native shade card unavailable", failure);
-                    }
                 }
+                if (panelChanged) try {
+                    panelModel = page == null ? updateModel(panelModel, render, template, shadeEntry, false)
+                            : renderShadePage(panelModel, page);
+                    shadeModels.put(item.key(), panelModel);
+                } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
+                    complete = false;
+                    panelModel = null;
+                    feature.failure("Native shade card unavailable", failure);
+                }
+                feature.shadePages.bind(item.key(), panelModel == null ? null : page);
                 if (reminders != null && !waitingForTouch.contains(item.key())) {
                     var latest = group.getLast();
                     boolean request = autoExpand.contains(latest.key());
@@ -215,6 +230,8 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
         captions.keySet().retainAll(nextVersions.keySet());
         waitingForTouch.retainAll(nextVersions.keySet());
         shadeModels.values().removeAll(removedFromShade);
+        feature.shadePages.retain(shadeModels.keySet());
+        if (paging != null) paging.refresh();
         versions.clear(); versions.putAll(nextVersions);
         if (placementChanged || listChanged || reminderChanged) Reflect.call(changed, listener, next);
         if (shadeDismissal != null) shadeDismissal.publish(shadeModels, coverage);
@@ -256,6 +273,40 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
         }
         return model;
     }
+    private Object renderShadePage(Object model, NotificationShadePages.Page page) throws ReflectiveOperationException {
+        var render = feature.renderNotification(page.members(), page);
+        Object template = Reflect.call(parse, parser, render);
+        if (template == null) throw new IllegalStateException("Missing notification page template");
+        return updateModel(model, render, template, shadeEntry, false);
+    }
+    @Override public void showShadePage(NotificationShadePages.Page page) throws ReflectiveOperationException {
+        Object model = shadeModels.get(page.rowKey());
+        if (model == null) throw new IllegalStateException("Missing notification row");
+        renderShadePage(model, page);
+    }
+    @Override public boolean supportsGroupPager() { return paging != null; }
+    List<?> shadeWrappers(String key) {
+        Object model = shadeModels.get(key);
+        return model == null ? List.of() : (List<?>) Reflect.call(wrappers, model);
+    }
+    NativeNotificationPageTemplates.Template createPage(NativeNotificationPageTemplates templates,
+            Object prototype, NotificationShadePages.Page page, NativeNotificationPageTemplates.Template existing)
+            throws ReflectiveOperationException {
+        if (!feature.canRenderShadePage(page)) throw new IllegalStateException("Page outside allowed notification projection");
+        var render = feature.renderNotification(page.members(), page);
+        Object data = Reflect.call(parse, parser, render);
+        if (data == null) throw new IllegalStateException("Missing notification page");
+        if (existing != null) {
+            source.set(existing.model(), render);
+            ui.set(existing.model(), data);
+            templates.update(existing, data);
+            return existing;
+        }
+        Object model = modelConstructor.newInstance(render, data, shadeEntry);
+        Reflect.call(prepare, model);
+        updatePlacement(model, true, page.locked());
+        return templates.inflate(prototype, model, data);
+    }
     private static boolean sameResourceIcon(StatusBarNotification old, StatusBarNotification next) {
         Icon before = old.getNotification().getSmallIcon(), after = next.getNotification().getSmallIcon();
         return before != null && after != null && before.getType() == Icon.TYPE_RESOURCE
@@ -274,8 +325,12 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
         Method launch = Reflect.method(callback, "f", boolean.class, model, View.class, List.class, boolean.class,
                 android.app.PendingIntent.class, Bundle.class);
         Method key = Reflect.method(model, "getKey", String.class);
+        Class<?> entrance = Reflect.type(loader, "com.oplus.systemui.plugins.livealert.lib.EntryType");
+        Method origin = Reflect.method(model, "k", entrance);
+        Object notification = enumValue(entrance, "ENTRY_NOTIFICATION");
         feature.module.hook(launch).setExceptionMode(io.github.libxposed.api.XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
-            if (feature.enabled() && feature.rules().shadeCards() && chain.getArg(4) instanceof android.app.PendingIntent target)
+            if (feature.enabled() && feature.rules().shadeCards() && chain.getArg(4) instanceof android.app.PendingIntent target
+                    && notification == Reflect.call(origin, chain.getArg(0)))
                 feature.armGroupOpen((String) Reflect.call(key, chain.getArg(0)), target);
             return chain.proceed();
         });
@@ -349,6 +404,7 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
         readinessChecksLeft = 0;
     }
     @Override public void close() {
+        if (paging != null) paging.close();
         cancelReadiness();
         projected = null;
         if (shadeDismissal != null) shadeDismissal.close();

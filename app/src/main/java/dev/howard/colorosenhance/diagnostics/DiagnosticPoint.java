@@ -13,6 +13,7 @@ public enum DiagnosticPoint {
     MEDIA_SHADE(Scope.UI, "cloud", "media_card_in_shade", "媒体卡片分发到通知中心"),
     MEDIA_SHADE_ROUTE(Scope.UI, "cloud", "media_card_in_shade", "媒体通知中心投递"),
     MEDIA_SHADE_ROW(Scope.UI, "cloud", "media_card_in_shade", "通知中心原生媒体行"),
+    MEDIA_SHADE_STYLE(Scope.UI, "cloud", "media_card_in_shade", "通知中心普通媒体卡片样式"),
     MEDIA_SHADE_TEXT(Scope.UI, "cloud", "media_card_in_shade", "通知中心媒体文字与歌词刷新"),
     MEDIA_HOLD(Scope.UI, "cloud", "keep_paused_music", "媒体会话与暂停超时"),
     MEDIA_WAVE(Scope.UI, "cloud", "realtime_media_wave", "实时律动采集与绘制接口"),
