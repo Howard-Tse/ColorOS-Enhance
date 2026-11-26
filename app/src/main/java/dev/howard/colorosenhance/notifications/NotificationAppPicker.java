@@ -33,7 +33,7 @@ public final class NotificationAppPicker extends LinearLayout {
     private final android.window.OnBackInvokedCallback back = this::backToApps;
     private android.window.OnBackInvokedDispatcher dispatcher;
     private NotificationCloudRules edited;
-    private NotificationChannelEditor editor;
+    private NotificationAppEditor editor;
     private boolean loaded;
     private int loadGeneration;
     public NotificationAppPicker(Context context, NotificationCloudRules rules) {
@@ -145,7 +145,7 @@ public final class NotificationAppPicker extends LinearLayout {
         var keyboard = getContext().getSystemService(android.view.inputmethod.InputMethodManager.class);
         if (keyboard != null) keyboard.hideSoftInputFromWindow(search.getWindowToken(), 0);
         appList.setVisibility(GONE);
-        editor = new NotificationChannelEditor(getContext(), edited, pkg, apps.get(pkg), this::backToApps);
+        editor = new NotificationAppEditor(getContext(), edited, pkg, apps.get(pkg), this::backToApps);
         addView(editor, new LayoutParams(-1, -1));
         registerBack();
     }

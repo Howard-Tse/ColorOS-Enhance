@@ -16,11 +16,15 @@ interface NotificationCloudRenderer {
     }
     boolean available();
     default boolean supportsGroupPager() { return false; }
+    default NotificationShadePages.Page expandedPage(String key) { return null; }
+    default boolean handlesExpandedSwipe(View row, int direction) { return false; }
+    default void hideHistoricalPages() { }
     default void showShadePage(NotificationShadePages.Page page) throws ReflectiveOperationException {
         throw new UnsupportedOperationException("Native grouped media layout unavailable");
     }
     int capsuleWidthLimit(View view);
     boolean open(String key);
+    default boolean open(String key, View anchor) { return open(key); }
     void closeCard(Runnable continuation);
     void close();
 }

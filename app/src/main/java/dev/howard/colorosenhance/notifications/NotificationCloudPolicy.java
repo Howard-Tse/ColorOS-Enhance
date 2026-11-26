@@ -2,15 +2,18 @@ package dev.howard.colorosenhance.notifications;
 
 import android.app.Notification;
 import android.app.NotificationManager;
-import android.os.UserHandle;
 import android.service.notification.StatusBarNotification;
 
 public final class NotificationCloudPolicy {
-    public static NotificationCloudRules.Mode evaluate(StatusBarNotification sbn, UserHandle user, int importance,
+    public static NotificationCloudRules.Mode evaluate(StatusBarNotification sbn, boolean acceptedUser, int importance,
             int channelImportance, boolean suspended, NotificationCloudRules rules) {
-        if (!rules.accepts(sbn.getPackageName())) return NotificationCloudRules.Mode.NATIVE;
+        return evaluate(sbn, acceptedUser, NotificationCloudRules.MAIN_APP, importance, channelImportance, suspended, rules);
+    }
+    public static NotificationCloudRules.Mode evaluate(StatusBarNotification sbn, boolean acceptedUser, int serial, int importance,
+            int channelImportance, boolean suspended, NotificationCloudRules rules) {
+        if (!acceptedUser || !rules.accepts(sbn.getPackageName(), serial)) return NotificationCloudRules.Mode.NATIVE;
         Notification n = sbn.getNotification();
-        if (!sbn.getUser().equals(user) || suspended || importance == NotificationManager.IMPORTANCE_NONE
+        if (suspended || importance == NotificationManager.IMPORTANCE_NONE
                 || n == null || n.getSmallIcon() == null || n.fullScreenIntent != null
                 || (n.flags & Notification.FLAG_GROUP_SUMMARY) != 0) return NotificationCloudRules.Mode.NATIVE;
         String pkg = sbn.getPackageName();
@@ -24,7 +27,7 @@ public final class NotificationCloudPolicy {
         }
         boolean progress = n.extras != null && (n.extras.getInt(Notification.EXTRA_PROGRESS_MAX) > 0
                 || n.extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE));
-        return rules.mode(pkg, n.getChannelId(), kind(Notification.CATEGORY_CALL.equals(n.category), importance, channelImportance, sbn.isOngoing(), progress));
+        return rules.mode(pkg, serial, n.getChannelId(), kind(Notification.CATEGORY_CALL.equals(n.category), importance, channelImportance, sbn.isOngoing(), progress));
     }
     public static NotificationCloudRules.Kind kind(boolean call, int importance, int channelImportance, boolean ongoing, boolean progress) {
         if (importance <= NotificationManager.IMPORTANCE_LOW || channelImportance != NotificationManager.IMPORTANCE_UNSPECIFIED

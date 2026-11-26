@@ -44,9 +44,12 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
     private final NativeShadeNotificationDismissal shadeDismissal;
     private final NativeNotificationShadePaging paging;
     private record Appearance(NotificationCloudRules.Style style, NotificationCloudRules.CapsuleText text, int limit,
-            boolean floating, Map<String, NotificationCloudRules.Floating> appFloating) { }
+            boolean floating, Map<String, NotificationCloudRules.Floating> appFloating,
+            Map<String, NotificationCloudRules.CloneRule> clones) { }
     private Appearance appearance;
     private boolean shadeShown, grouped, lockedPlacement;
+    private boolean projectedUnlocked;
+    private long projectedHistory;
     private List<NotificationCloudStore.Entry<StatusBarNotification>> projected;
 
     NativeNotificationCloud(NotificationCloudFeature feature, View root, Context host) throws ReflectiveOperationException {
@@ -107,7 +110,7 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
             feature.failure("Extended notification build queue unavailable; unprepared originals retained", unavailable);
         }
         NativeNotificationControls optional;
-        try { optional = new NativeNotificationControls(feature, root, binding); }
+        try { optional = new NativeNotificationControls(feature, this, root, binding); }
         catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
             optional = null; feature.failure("Notification capsule controls unavailable; original notifications retained", failure);
         }
@@ -137,12 +140,14 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
     @Override public void update(List<NotificationCloudStore.Entry<StatusBarNotification>> notifications, NotificationCloudRules rules,
             Set<String> autoExpand) {
         Appearance rendering = new Appearance(rules.style(), rules.capsuleText(), feature.capsuleMaxDp(),
-                rules.floating(), rules.appFloating());
+                rules.floating(), rules.appFloating(), rules.clones());
         boolean changedAppearance = !rendering.equals(appearance);
         boolean lockCards = !feature.unlocked() && rules.retainOnLock() && rules.lockCards();
         boolean placementChanged = lockCards != lockedPlacement;
         boolean showShade = (feature.unlocked() ? rules.shadeCards() : lockCards) && shadeListener != null && !notifications.isEmpty();
+        long historyVersion = feature.history.generation();
         if (!placementChanged && autoExpand.isEmpty() && !changedAppearance && showShade == shadeShown && grouped == rules.groupApps()
+                && projectedHistory == historyVersion && projectedUnlocked == feature.unlocked()
                 && notifications.equals(projected)) return;
         projected = null;
         boolean complete = true;
@@ -218,6 +223,8 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
                 next.add(model); removed.remove(model); nextVersions.put(item.key(), version);
                 if (showShade && panelModel != null) { shadeNext.add(panelModel); removedFromShade.remove(panelModel); }
                 coverage.put(item.key(), group); for (var member : group) representatives.put(member.key(), item.key());
+                if (paging != null && paging.supportsExpanded())
+                    feature.expandedPages.bind(item.key(), feature.expandPage(group));
             } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
                 complete = false;
                 for (var member : group) feature.store.failed(member.key());
@@ -231,6 +238,7 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
         waitingForTouch.retainAll(nextVersions.keySet());
         shadeModels.values().removeAll(removedFromShade);
         feature.shadePages.retain(shadeModels.keySet());
+        feature.expandedPages.retain(coverage.keySet());
         if (paging != null) paging.refresh();
         versions.clear(); versions.putAll(nextVersions);
         if (placementChanged || listChanged || reminderChanged) Reflect.call(changed, listener, next);
@@ -240,6 +248,8 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
         lockedPlacement = lockCards;
         shadeShown = showShade;
         grouped = rules.groupApps();
+        projectedUnlocked = feature.unlocked();
+        projectedHistory = historyVersion;
         removed.addAll(removedFromShade);
         for (Object obsolete : removed) {
             if (reminders != null) reminders.forget(obsolete);
@@ -274,7 +284,7 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
         return model;
     }
     private Object renderShadePage(Object model, NotificationShadePages.Page page) throws ReflectiveOperationException {
-        var render = feature.renderNotification(page.members(), page);
+        var render = feature.renderNotification(page.members(), page.historical() ? page.at(0) : page);
         Object template = Reflect.call(parse, parser, render);
         if (template == null) throw new IllegalStateException("Missing notification page template");
         return updateModel(model, render, template, shadeEntry, false);
@@ -285,14 +295,32 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
         renderShadePage(model, page);
     }
     @Override public boolean supportsGroupPager() { return paging != null; }
+    @Override public void hideHistoricalPages() {
+        feature.shadePages.clear();
+        feature.expandedPages.clear();
+        if (paging != null) paging.refresh();
+        projected = null;
+    }
+    @Override public NotificationShadePages.Page expandedPage(String key) {
+        return paging == null ? null : paging.expandedPage(key);
+    }
+    @Override public boolean handlesExpandedSwipe(View row, int direction) {
+        return paging != null && paging.handlesExpandedSwipe(row, direction);
+    }
     List<?> shadeWrappers(String key) {
         Object model = shadeModels.get(key);
         return model == null ? List.of() : (List<?>) Reflect.call(wrappers, model);
     }
+    List<?> expandedWrappers(String key) {
+        Object model = models.get(key);
+        return model == null ? List.of() : (List<?>) Reflect.call(wrappers, model);
+    }
     NativeNotificationPageTemplates.Template createPage(NativeNotificationPageTemplates templates,
-            Object prototype, NotificationShadePages.Page page, NativeNotificationPageTemplates.Template existing)
+            Object prototype, NotificationShadePages.Page page, NativeNotificationPageTemplates.Template existing,
+            boolean expanded)
             throws ReflectiveOperationException {
-        if (!feature.canRenderShadePage(page)) throw new IllegalStateException("Page outside allowed notification projection");
+        if (!(expanded ? feature.canRenderExpandedPage(page) : feature.canRenderShadePage(page)))
+            throw new IllegalStateException("Page outside allowed notification projection");
         var render = feature.renderNotification(page.members(), page);
         Object data = Reflect.call(parse, parser, render);
         if (data == null) throw new IllegalStateException("Missing notification page");
@@ -302,13 +330,16 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
             templates.update(existing, data);
             return existing;
         }
-        Object model = modelConstructor.newInstance(render, data, shadeEntry);
+        Object model = modelConstructor.newInstance(render, data, expanded ? entry : shadeEntry);
         Reflect.call(prepare, model);
-        updatePlacement(model, true, page.locked());
+        if (!expanded) updatePlacement(model, true, page.locked());
         return templates.inflate(prototype, model, data);
     }
     private static boolean sameResourceIcon(StatusBarNotification old, StatusBarNotification next) {
         Icon before = old.getNotification().getSmallIcon(), after = next.getNotification().getSmallIcon();
+        if (!android.os.Process.myUserHandle().equals(next.getUser())
+                && old.getNotification().extras.getParcelable(NotificationCloneBadge.CAPSULE_ICON, Icon.class)
+                != next.getNotification().extras.getParcelable(NotificationCloneBadge.CAPSULE_ICON, Icon.class)) return false;
         return before != null && after != null && before.getType() == Icon.TYPE_RESOURCE
                 && after.getType() == Icon.TYPE_RESOURCE && before.getResId() == after.getResId()
                 && java.util.Objects.equals(before.getResPackage(), after.getResPackage());
@@ -338,7 +369,22 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
     @Override public boolean available() { return controls != null; }
     @Override public int capsuleWidthLimit(View view) { return capsule == null ? Integer.MAX_VALUE : capsule.widthLimit(view); }
     @Override public void closeCard(Runnable continuation) { if (controls != null) controls.closeCard(continuation); }
-    @Override public boolean open(String key) {
+    Object openFromNativeCard(String rowKey, android.app.PendingIntent target,
+            io.github.libxposed.api.XposedInterface.Chain chain) throws Throwable {
+        Object model = models.get(rowKey);
+        if (model == null) return null;
+        var displayed = (StatusBarNotification) Reflect.get(source, model);
+        if (target.equals(displayed.getNotification().contentIntent)) return chain.proceed();
+        // ColorOS starts the card-to-app scene using the original row and its
+        // service ID. Substitute only the click target for the synchronous dispatch.
+        var clickSource = displayed.clone();
+        clickSource.getNotification().contentIntent = target;
+        source.set(model, clickSource);
+        try { return chain.proceed(); }
+        finally { source.set(model, displayed); }
+    }
+    @Override public boolean open(String key) { return open(key, null); }
+    @Override public boolean open(String key, View anchor) {
         Object model = models.get(representatives.getOrDefault(key, key)); if (model == null) return openWithActivityStarter(feature, host, key);
         try {
             List<?> views = (List<?>) Reflect.call(wrappers, model);
@@ -347,7 +393,8 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
                 if (!size.toString().equals(preferred)) continue;
                 Object callback = Reflect.get(Reflect.field(view.getClass(), "e", Reflect.type(loader, "com.oplus.systemui.plugins.livealert.lib.i")), view);
                 if (callback == null) continue;
-                Object nativeView = Reflect.call(Reflect.method(view.getClass(), "f", View.class, boolean.class), view, true);
+                Object nativeView = anchor == null
+                        ? Reflect.call(Reflect.method(view.getClass(), "f", View.class, boolean.class), view, true) : anchor;
                 var original = feature.store.get(key); if (original == null || original.value().getNotification().contentIntent == null) return false;
                 Class<?> base = Reflect.type(loader, "com.oplus.systemui.plugins.livealert.lib.m");
                 Method launch = Reflect.signature(callback.getClass(), boolean.class, base, View.class, List.class, boolean.class, android.app.PendingIntent.class, Bundle.class);

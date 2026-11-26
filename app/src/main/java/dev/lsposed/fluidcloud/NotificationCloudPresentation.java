@@ -11,7 +11,7 @@ import io.github.libxposed.api.XposedInterface;
 import java.lang.reflect.Method;
 import java.util.List;
 
-/** Filters only the shade presentation after native card/collection readiness; never rewires system groups. */
+/** Coordinates shade rows, status icons and banners with native card and collection readiness. */
 final class NotificationCloudPresentation {
     private final NotificationCloudFeature feature;
     private final NotificationIconDeferral icons;
@@ -27,6 +27,7 @@ final class NotificationCloudPresentation {
     private boolean grouping;
     private java.util.Set<String> lastKeys = java.util.Set.of();
     private NotificationCloudRules.Original lastOriginal;
+    private boolean lastReplaceHeadsUp;
     private Object headsUp;
     private Method removeHeadsUp;
     private final java.util.Map<String, Object> deferredBinds = new java.util.HashMap<>();
@@ -139,12 +140,12 @@ final class NotificationCloudPresentation {
             StatusBarNotification source = current == null ? null : feature.notification(current);
             if (!feature.mayReplaceBanner(current, source)) return chain.proceed();
             String key = source.getKey();
-            if (replaced(key)) return null;
+            if (bannerReplaced(source)) return null;
             Object owner = chain.getThisObject();
             Object token = new Object();
             deferredBinds.put(key, token);
             feature.main.postDelayed(() -> {
-                if (!deferredBinds.remove(key, token) || replaced(key) || !feature.unlocked()) return;
+                if (!deferredBinds.remove(key, token) || bannerReplaced(source) || !feature.unlocked()) return;
                 Object live = feature.liveEntry(key);
                 if (live != current || feature.notification(live) != source) return;
                 replaying = true;
@@ -168,8 +169,8 @@ final class NotificationCloudPresentation {
                 && java.util.Arrays.equals(method.getParameterTypes(), new Class<?>[]{entry})) feature.module.hook(method)
                 .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
                     headsUp = Reflect.get(capture.field, chain.getThisObject());
-                    String key = feature.notification(chain.getArg(0)).getKey();
-                    return replaced(key) ? suppressed : chain.proceed();
+                    StatusBarNotification source = feature.notification(chain.getArg(0));
+                    return bannerReplaced(source) ? suppressed : chain.proceed();
                 });
     }
     private record FieldCapture(java.lang.reflect.Field field) { }
@@ -196,6 +197,14 @@ final class NotificationCloudPresentation {
                 && feature.rules().original() != NotificationCloudRules.Original.KEEP && feature.store.ready(key);
         return feature.rules().original() == NotificationCloudRules.Original.HIDE && ready(key) || collected(key);
     }
+    private boolean bannerReplaced(StatusBarNotification source) {
+        if (source == null) return false;
+        String key = source.getKey();
+        var rules = feature.rules();
+        if (rules.hideOriginal()) return replaced(key);
+        // A repost can reuse the key before its new payload reaches the renderer.
+        return rules.suppressOriginalBanner() && ready(key) && feature.store.get(key).value() == source;
+    }
     void refresh() {
         refresh(null);
     }
@@ -206,15 +215,24 @@ final class NotificationCloudPresentation {
         java.util.Set<String> keys = feature.store.entries().stream().filter(entry -> ready(entry.key())
                         || !feature.unlocked() && replaced(entry.key()))
                 .map(dev.howard.colorosenhance.notifications.NotificationCloudStore.Entry::key).collect(java.util.stream.Collectors.toSet());
-        if (lastKeys.equals(keys) && lastOriginal == feature.rules().original()) return;
-        lastKeys = java.util.Set.copyOf(keys); lastOriginal = feature.rules().original();
-        if (keys.isEmpty() || !shouldCollect()) grouping = false;
-        queueRebuild();
+        var rules = feature.rules();
+        boolean shadeChanged = !lastKeys.equals(keys) || lastOriginal != rules.original();
+        if (!shadeChanged && lastReplaceHeadsUp == rules.replaceHeadsUp()) return;
+        lastReplaceHeadsUp = rules.replaceHeadsUp();
+        if (shadeChanged) {
+            lastKeys = java.util.Set.copyOf(keys); lastOriginal = rules.original();
+            if (keys.isEmpty() || !shouldCollect()) grouping = false;
+            queueRebuild();
+        }
         removeReplacedBanners(keys);
     }
     private void removeReplacedBanners(java.util.Set<String> keys) {
         if (!feature.rules().replaceHeadsUp() || headsUp == null || removeHeadsUp == null) return;
-        for (String key : keys) if (replaced(key)) Reflect.call(removeHeadsUp, headsUp, key, false, "Converted notification ready");
+        for (String key : keys) {
+            var item = feature.store.get(key);
+            if (item != null && bannerReplaced(item.value()))
+                Reflect.call(removeHeadsUp, headsUp, key, false, "Converted notification ready");
+        }
     }
     void invalidate() {
         if (icons != null) icons.reconcile();

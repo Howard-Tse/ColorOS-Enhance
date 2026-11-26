@@ -11,6 +11,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.UserHandle;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 import android.view.View;
@@ -31,6 +32,8 @@ final class NotificationCloudFeature {
     final Handler main = new Handler(Looper.getMainLooper());
     final NotificationCloudStore<StatusBarNotification> store = new NotificationCloudStore<>();
     final NotificationShadePages shadePages = new NotificationShadePages();
+    final NotificationShadePages expandedPages = new NotificationShadePages();
+    final NotificationCloudHistory history = new NotificationCloudHistory();
     private final Map<String, Object> entries = new LinkedHashMap<>();
     private final Method all, sbn, ranking, findEntry;
     private Object collection;
@@ -44,9 +47,11 @@ final class NotificationCloudFeature {
     private boolean screenBlocked;
     private boolean unlockedSnapshot;
     private boolean preparingUnlock;
+    private boolean historySeedPending;
     private Object observedCollection, collectionObserver;
     private final Set<String> newNotificationKeys = new HashSet<>();
     private NotificationCloudActions actions;
+    private NotificationCloneBadge cloneBadge;
     private NotificationCollectionPage collectionPage;
     private final NotificationOpenCleanup openCleanup;
     private int capsuleMaxDp;
@@ -54,6 +59,7 @@ final class NotificationCloudFeature {
     private final java.util.concurrent.ExecutorService alertStatusWorker = java.util.concurrent.Executors.newSingleThreadExecutor(
             task -> new Thread(task, "coloros-notification-alert-status"));
     private Boolean lastAlertStatus;
+    private Map<UserHandle, Integer> lastAlertClones = Map.of();
     private volatile int alertStatusGeneration;
     private NotificationCloudRules rules = NotificationCloudRules.DEFAULT;
     private final Runnable refreshTask = () -> { scheduled = false; refresh(); };
@@ -75,10 +81,15 @@ final class NotificationCloudFeature {
         Class<?> observerType = Reflect.type(loader, "com.android.systemui.statusbar.notification.collection.notifcollection.NotifCollectionListener");
         collectionObserver = Reflect.listener(observerType, (event, args) -> {
             if (!configured && !active) return;
-            if (event.getName().equals("onEntryAdded") && enabled() && active && unlocked())
+            String name = event.getName();
+            if (name.equals("onEntryAdded") && enabled() && active && unlocked())
                 newNotificationKeys.add(notification(args[0]).getKey());
-            if (event.getName().equals("onEntryRemoved")) {
+            if (historyEnabled() && (name.equals("onEntryAdded") || name.equals("onEntryUpdated")))
+                observeHistory(args[0]);
+            if (name.equals("onEntryRemoved")) {
                 String key = notification(args[0]).getKey();
+                if (historyEnabled() && args.length > 1 && args[1] instanceof Integer reason)
+                    history.removed(key, reason, android.os.SystemClock.elapsedRealtime());
                 newNotificationKeys.remove(key);
                 if (capsuleResume != null) capsuleResume.removed(key);
                 if (presentation != null) presentation.removed(key);
@@ -171,6 +182,7 @@ final class NotificationCloudFeature {
         if (context == null) {
             context = host;
             actions = new NotificationCloudActions(this, host);
+            cloneBadge = new NotificationCloneBadge(host);
             try { NativeNotificationMenu.install(this, actions, host.getClassLoader()); }
             catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
                 failure("ColorOS notification-card menu unavailable", failure);
@@ -195,6 +207,8 @@ final class NotificationCloudFeature {
                         leaveKeyguard();
                         return;
                     } else {
+                        history.clear();
+                        historySeedPending = true;
                         if (capsuleResume != null) capsuleResume.reset();
                         if (presentation != null) presentation.finishUnlock();
                     }
@@ -204,6 +218,7 @@ final class NotificationCloudFeature {
             IntentFilter filter = new IntentFilter();
             filter.addAction(Intent.ACTION_SCREEN_OFF); filter.addAction(Intent.ACTION_USER_PRESENT);
             filter.addAction("android.intent.action.USER_SWITCHED"); filter.addAction(Intent.ACTION_MANAGED_PROFILE_UNAVAILABLE);
+            filter.addAction("android.intent.action.USER_ADDED"); filter.addAction("android.intent.action.USER_REMOVED");
             context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
         }
         ClassLoader loader = root.getClass().getClassLoader();
@@ -211,6 +226,7 @@ final class NotificationCloudFeature {
             if (capsuleResume != null) { capsuleResume.close(); capsuleResume = null; }
             if (nativeCloud != null) nativeCloud.close();
             shadePages.clear();
+            expandedPages.clear();
             Class<?> container = Reflect.type(loader, NativeCapsuleAppearance.VIEWS + "CapsuleContainer");
             nativeCloud = ColorOs16Plugin.capsule(container) ? new LegacyNotificationCloud(this, loader, host)
                     : new NativeNotificationCloud(this, root, host);
@@ -234,6 +250,10 @@ final class NotificationCloudFeature {
         if (preparingUnlock) cancelUnlock();
         screenBlocked = true;
         unlockedSnapshot = false;
+        history.forgetLive();
+        historySeedPending = true;
+        if (actions != null) actions.closeHistory();
+        if (rules.history() && nativeCloud != null) nativeCloud.hideHistoricalPages();
     }
     private void cancelUnlock() {
         preparingUnlock = false;
@@ -274,7 +294,15 @@ final class NotificationCloudFeature {
                 if (capsuleResume != null) capsuleResume.reset();
                 if (presentation != null) presentation.finishUnlock();
             }
-            if (!enabled || !next.groupApps()) shadePages.clear();
+            if (!enabled || !next.groupApps()) {
+                shadePages.clear();
+                expandedPages.clear();
+            }
+            if (!enabled || !next.history() || !rules.history() || !sameHistoryScope(rules, next)) {
+                history.clear();
+                historySeedPending = true;
+                if (actions != null) actions.closeHistory();
+            }
             rules = next; configured = enabled; capsuleMaxDp = max;
             changed();
         });
@@ -286,6 +314,24 @@ final class NotificationCloudFeature {
         return unlockedSnapshot && !screenBlocked;
     }
     NotificationCloudRules rules() { return rules; }
+    private boolean historyEnabled() { return enabled() && unlocked() && rules.history() && nativeCloud != null; }
+
+    private static boolean sameHistoryScope(NotificationCloudRules current, NotificationCloudRules next) {
+        return current.denylist() == next.denylist() && current.allowed().equals(next.allowed())
+                && current.denied().equals(next.denied()) && current.clones().equals(next.clones())
+                && current.overrides().equals(next.overrides()) && current.ordinary() == next.ordinary()
+                && current.silent() == next.silent();
+    }
+
+    private void observeHistory(Object entry) {
+        try {
+            StatusBarNotification item = notification(entry);
+            if (!store.suppressed(item.getKey()) && eligible(entry, item))
+                history.observe(item, android.os.SystemClock.elapsedRealtime());
+        } catch (RuntimeException | LinkageError unavailable) {
+            // Malformed application extras must not prevent an ordinary live notification from rendering.
+        }
+    }
     int capsuleMaxDp() { return capsuleMaxDp; }
     int capsuleWidthLimit(View view) { return nativeCloud == null ? Integer.MAX_VALUE : nativeCloud.capsuleWidthLimit(view); }
     private void refresh() {
@@ -319,8 +365,15 @@ final class NotificationCloudFeature {
                 next.put(key, entry);
                 var current = store.get(key);
                 if (mode == NotificationCloudRules.Mode.EXPAND && newNotificationKeys.contains(key)) reminders.add(key);
-                if (current == null || current.value() != notification) store.put(key, notification.getPackageName(),
-                        notification.getNotification().getChannelId(), notification);
+                if (historyEnabled() && (historySeedPending || current == null || current.value() != notification))
+                    observeHistory(entry);
+                if (current == null || current.value() != notification) {
+                    store.put(key, notification.getPackageName(), notification.getNotification().getChannelId(), notification);
+                }
+            }
+            if (historyEnabled()) {
+                history.retainLive(next.keySet());
+                historySeedPending = false;
             }
             store.retainSuppressed(liveKeys);
             newNotificationKeys.clear();
@@ -351,11 +404,16 @@ final class NotificationCloudFeature {
     }
     private void publishAlertStatus(boolean available) {
         if (context == null) return;
-        if (Boolean.valueOf(available).equals(lastAlertStatus)) return;
+        Map<UserHandle, Integer> clones = available ? cloneUsers() : Map.of();
+        if (Boolean.valueOf(available).equals(lastAlertStatus) && clones.equals(lastAlertClones)) return;
         lastAlertStatus = available;
+        lastAlertClones = clones;
         int generation = ++alertStatusGeneration;
         android.os.Bundle args = new android.os.Bundle();
         args.putBinder("renderer", available ? alertRenderer : null);
+        var users = new ArrayList<>(clones.keySet());
+        args.putParcelableArrayList("clone_users", users);
+        args.putIntArray("clone_serials", users.stream().mapToInt(clones::get).toArray());
         alertStatusWorker.execute(() -> {
             if (generation != alertStatusGeneration) return;
             try { context.getContentResolver().call(dev.howard.colorosenhance.notifications.NotificationMetadataProvider.URI,
@@ -382,7 +440,7 @@ final class NotificationCloudFeature {
         return !store.suppressed(notification.getKey()) && eligible(entry, notification);
     }
     boolean canConvertForIcon(Object entry, StatusBarNotification notification) {
-        return enabled() && nativeCloud != null && nativeCloud.available() && rules.replaceHeadsUp()
+        return enabled() && nativeCloud != null && nativeCloud.available() && rules.hideOriginal()
                 && (rules.original() != NotificationCloudRules.Original.COLLECT || collectionSupported())
                 && !store.suppressed(notification.getKey()) && eligible(entry, notification);
     }
@@ -401,14 +459,23 @@ final class NotificationCloudFeature {
         if (collectionPage != null) collectionPage.refresh();
     }
     private NotificationCloudRules.Mode mode(Object entry, StatusBarNotification sbn) {
-        if (!rules.accepts(sbn.getPackageName())) return NotificationCloudRules.Mode.NATIVE;
+        int serial = cloneSerial(sbn);
+        if (serial == NotificationCloudRules.MAIN_APP && !android.os.Process.myUserHandle().equals(sbn.getUser()))
+            return NotificationCloudRules.Mode.NATIVE;
+        if (!rules.accepts(sbn.getPackageName(), serial))
+            return NotificationCloudRules.Mode.NATIVE;
         if (Notification.CATEGORY_CALL.equals(sbn.getNotification().category)) try {
             var app = context.getPackageManager().getApplicationInfo(sbn.getPackageName(), 0);
             if ((app.flags & android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0) return NotificationCloudRules.Mode.NATIVE;
         } catch (android.content.pm.PackageManager.NameNotFoundException missing) { return NotificationCloudRules.Mode.NATIVE; }
         var rank = (NotificationListenerService.Ranking) Reflect.call(ranking, entry);
-        return dev.howard.colorosenhance.notifications.NotificationCloudPolicy.evaluate(sbn, android.os.Process.myUserHandle(),
+        return dev.howard.colorosenhance.notifications.NotificationCloudPolicy.evaluate(sbn, true, serial,
                 rank.getImportance(), rank.getChannel() == null ? NotificationManager.IMPORTANCE_UNSPECIFIED : rank.getChannel().getImportance(), rank.isSuspended(), rules);
+    }
+    Map<UserHandle, Integer> cloneUsers() { return lockPolicy == null ? Map.of() : lockPolicy.cloneUsers(); }
+    int cloneSerial(StatusBarNotification sbn) {
+        return lockPolicy == null || android.os.Process.myUserHandle().equals(sbn.getUser())
+                ? NotificationCloudRules.MAIN_APP : lockPolicy.cloneSerial(sbn.getUser());
     }
     StatusBarNotification renderNotification(java.util.List<NotificationCloudStore.Entry<StatusBarNotification>> group) {
         return renderNotification(group, null);
@@ -419,11 +486,20 @@ final class NotificationCloudFeature {
         if (page != null ? page.locked() : !unlocked() && rules.lockCards()) {
             NotificationLockscreenCards.preparePreview(render.getNotification());
         }
+        if (cloneBadge != null) cloneBadge.decorate(render, cloneSerial(render));
         return render;
     }
     NotificationShadePages.Page shadePage(java.util.List<NotificationCloudStore.Entry<StatusBarNotification>> group,
             boolean showShade, boolean locked) {
-        return showShade && nativeCloud != null && nativeCloud.supportsGroupPager() ? shadePages.resolve(group, locked) : null;
+        return showShade && nativeCloud != null && nativeCloud.supportsGroupPager()
+                ? shadePages.resolve(group, locked ? java.util.List.of() : historicalMembers(group), locked) : null;
+    }
+    NotificationShadePages.Page expandPage(java.util.List<NotificationCloudStore.Entry<StatusBarNotification>> group) {
+        return unlocked() ? expandedPages.resolve(group, historicalMembers(group), false) : null;
+    }
+    java.util.List<NotificationCloudStore.Entry<StatusBarNotification>> historicalMembers(
+            java.util.List<NotificationCloudStore.Entry<StatusBarNotification>> group) {
+        return historyEnabled() ? history.forGroup(group) : java.util.List.of();
     }
     boolean selectShadePage(NotificationShadePages.Page from, int position) {
         var live = shadePages.current(from.rowKey());
@@ -444,13 +520,44 @@ final class NotificationCloudFeature {
         }
     }
     boolean canRenderShadePage(NotificationShadePages.Page page) {
-        if (!enabled() || !rules.groupApps() || page.locked() == unlocked()) return false;
+        if (!enabled() || page.locked() == unlocked()) return false;
+        if (page.historical()) return !page.locked() && rules.shadeCards() && canRenderHistoricalPage(page);
         var member = page.member();
         Object entry = liveEntry(member.key());
         if (entry == null || notification(entry) != member.value() || store.suppressed(member.key())) return false;
         return page.locked()
                 ? rules.retainOnLock() && rules.lockCards() && lockPolicy != null && lockPolicy.allows(entry, member.value(), true)
                 : rules.shadeCards() && !context.getSystemService(KeyguardManager.class).isKeyguardLocked();
+    }
+    boolean canRenderExpandedPage(NotificationShadePages.Page page) {
+        if (!enabled() || !unlocked()) return false;
+        if (page.historical()) return canRenderHistoricalPage(page);
+        var member = page.member();
+        Object entry = liveEntry(member.key());
+        return entry != null && notification(entry) == member.value() && !store.suppressed(member.key());
+    }
+    private boolean canRenderHistoricalPage(NotificationShadePages.Page page) {
+        var source = liveEntry(page.rowKey());
+        return historyEnabled() && history.contains(page.member()) && source != null
+                && notification(source) == page.anchor().value() && !store.suppressed(page.rowKey());
+    }
+    NotificationShadePages.Page expandedPage(String key) {
+        return nativeCloud == null ? null : nativeCloud.expandedPage(key);
+    }
+    boolean handlesExpandedSwipe(View row, int direction) {
+        return nativeCloud != null && nativeCloud.handlesExpandedSwipe(row, direction);
+    }
+    String menuMember(String key) {
+        var page = expandedPage(key);
+        if (page == null) page = shadePages.current(key);
+        if (page != null) return page.historical() ? page.rowKey() : page.member().key();
+        var group = group(key);
+        return group.isEmpty() ? key : group.getLast().key();
+    }
+    boolean historicalMenu(String key) {
+        var page = expandedPage(key);
+        if (page == null) page = shadePages.current(key);
+        return page != null && page.historical();
     }
     java.util.List<NotificationCloudStore.Entry<StatusBarNotification>> group(String key) {
         var item = store.get(key); if (item == null) return java.util.List.of();
@@ -459,20 +566,35 @@ final class NotificationCloudFeature {
         return store.entries().stream().filter(entry -> !store.suppressed(entry.key()) && NotificationCloudGrouping.identity(entry.value()).equals(identity)).toList();
     }
     void dismissCard(String key) {
-        if (!enabled() || !unlocked() || !store.ready(key)) return;
-        for (var entry : group(key)) {
+        dismissCard(key, null);
+    }
+    void dismissCard(String key, Set<String> startedWith) {
+        if (!enabled() || !unlocked() || !rules.swipeDismiss() || !store.ready(key)) return;
+        var members = group(key);
+        if (rules.history()) history.clearGroup(members);
+        for (var entry : members) {
+            if (startedWith != null && !startedWith.contains(entry.key())) continue;
             if (!dismissOriginal(entry.key())) returnOriginal(entry.key());
         }
     }
     boolean open(String key) {
+        return open(key, null);
+    }
+    boolean open(String key, View anchor) {
         if (nativeCloud == null || !unlocked()) return false;
         var item = store.get(key);
         if (item == null) return false;
         armOpen(key, item.value().getNotification().contentIntent);
-        return nativeCloud.open(key);
+        return nativeCloud.open(key, anchor);
     }
     void armOpen(String key, PendingIntent target) { openCleanup.arm(key, target); }
     void armGroupOpen(String key) {
+        var page = expandedPage(key);
+        if (page != null) {
+            var member = page.member();
+            armOpen(member.key(), member.value().getNotification().contentIntent);
+            return;
+        }
         var group = group(key);
         if (group.isEmpty()) return;
         var item = group.get(group.size() - 1);

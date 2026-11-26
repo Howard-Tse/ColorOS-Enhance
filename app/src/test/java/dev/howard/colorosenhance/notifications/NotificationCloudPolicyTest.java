@@ -19,7 +19,7 @@ public class NotificationCloudPolicyTest {
     }
     private NotificationCloudRules rules() throws Exception { return NotificationCloudRules.DEFAULT.with("allowed", new org.json.JSONArray().put("test.app")); }
     private NotificationCloudRules.Mode evaluate(StatusBarNotification sbn, int importance, int channel, boolean suspended) throws Exception {
-        return NotificationCloudPolicy.evaluate(sbn, android.os.Process.myUserHandle(), importance, channel, suspended, rules());
+        return NotificationCloudPolicy.evaluate(sbn, true, importance, channel, suspended, rules());
     }
     @Test public void silentOngoingUsesSilentPolicyAndRingerModeIsNotPartOfClassification() throws Exception {
         var sbn = notification("test.app", Notification.CATEGORY_SERVICE); sbn.getNotification().flags |= Notification.FLAG_ONGOING_EVENT;
@@ -40,6 +40,8 @@ public class NotificationCloudPolicyTest {
         assertEquals(NotificationCloudRules.Mode.CAPSULE, evaluate(notification("test.app", Notification.CATEGORY_MESSAGE), 3, 3, false));
         assertEquals(NotificationCloudRules.Mode.NATIVE, evaluate(notification("test.app", Notification.CATEGORY_MESSAGE), 0, 0, false));
         assertEquals(NotificationCloudRules.Mode.NATIVE, evaluate(notification("other.app", Notification.CATEGORY_MESSAGE), 3, 3, false));
+        assertEquals(NotificationCloudRules.Mode.NATIVE, NotificationCloudPolicy.evaluate(
+                notification("test.app", Notification.CATEGORY_MESSAGE), false, 3, 3, false, rules()));
     }
     @Test public void existingLegacyLiveAlertsStayInTheOriginalPipeline() throws Exception {
         var sbn = notification("test.app", Notification.CATEGORY_MESSAGE);

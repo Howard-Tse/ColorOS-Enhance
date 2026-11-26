@@ -516,6 +516,13 @@ final class NativeCameraCard {
     private void adjustContent(View card, int inset) {
         View child = (View) Reflect.get(content, card);
         if (child == null || !(child.getLayoutParams() instanceof FrameLayout.LayoutParams params)) return;
+        if (inset == 0) {
+            var expanded = NotificationPagerMount.Expanded.find(card, child);
+            if (expanded != null) {
+                expanded.keepCameraGap(0, null);
+                expanded.restoreMaterial();
+            }
+        }
         Margin previous = margins.get(child);
         int nativeTop = previous != null && params.topMargin == previous.appliedTop()
                 ? previous.nativeTop() : params.topMargin;
@@ -544,6 +551,8 @@ final class NativeCameraCard {
             return;
         }
         reconcileBodyFrame(card, child);
+        var expanded = NotificationPagerMount.Expanded.find(card, child);
+        if (expanded != null) expanded.keepCameraGap(inset, activeMorphMask(card));
         ArrayList<View> layers = new ArrayList<>();
         findDecorativeBackgrounds(child, child, layers);
         for (View background : layers) {
@@ -607,7 +616,14 @@ final class NativeCameraCard {
     }
     private void syncMaterials(ViewGroup card, View body) {
         var paints = new ArrayList<CameraMaterialSurface.Paint>();
-        for (int i = 0; i < card.getChildCount(); i++) collectMaterials(card.getChildAt(i), body, paints);
+        var expanded = body == null ? null : NotificationPagerMount.Expanded.find(card, body);
+        boolean paged = expanded != null && expanded.showing() && cameraContentInset(card) > 0;
+        for (int i = 0; i < card.getChildCount(); i++) {
+            View child = card.getChildAt(i);
+            if (!paged || !expanded.owns(child)) collectMaterials(child, body, paints, paged && child == body);
+        }
+        if (paged && !paints.isEmpty()) expanded.useSharedMaterial(pageBackgroundType, sharedStrokeHosts);
+        else if (expanded != null) expanded.restoreMaterial();
         var reference = materialSurfaces.get(card);
         CameraMaterialSurface surface = reference == null ? null : reference.get();
         if (paints.isEmpty()) { removeMaterialSurface(card); return; }
@@ -669,15 +685,16 @@ final class NativeCameraCard {
         surface.updateOutline(new MaterialOutline(card.getOutlineProvider(), mask == null ? null : new Rect(mask),
                 card.getWidth(), card.getHeight()), material);
     }
-    private void collectMaterials(View view, View body, List<CameraMaterialSurface.Paint> paints) {
-        if (view instanceof CameraMaterialSurface || view instanceof CameraHeaderSurface || view.getVisibility() != View.VISIBLE) return;
+    private void collectMaterials(View view, View body, List<CameraMaterialSurface.Paint> paints, boolean retainBody) {
+        if (view instanceof CameraMaterialSurface || view instanceof CameraHeaderSurface
+                || !retainBody && view.getVisibility() != View.VISIBLE) return;
         Decorations pair = decorations.get(view);
         // The body's blur/alpha animates the controls, not the independently sized
         // card material. Preserve a decorative layer's own SDK crossfade alpha.
         float alpha = view == body ? 1f : Math.max(0f, Math.min(1f, view.getAlpha()));
         if (pair != null && pair.background() != null) paints.add(new CameraMaterialSurface.Paint(pair.background(), alpha));
         if (view instanceof ViewGroup group) for (int i = 0; i < group.getChildCount(); i++)
-            collectMaterials(group.getChildAt(i), body, paints);
+            collectMaterials(group.getChildAt(i), body, paints, false);
         // The shared page's fallback stroke is a separate foreground on the content
         // root. Its original bounds start below the camera inset, just like the body.
         // Other content-bearing foregrounds can be spotlights and stay in place.

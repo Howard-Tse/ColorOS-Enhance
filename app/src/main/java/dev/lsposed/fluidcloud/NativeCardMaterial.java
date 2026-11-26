@@ -8,6 +8,8 @@ import java.util.WeakHashMap;
 
 /** Native ULE material caches its shader size independently of Drawable bounds. */
 final class NativeCardMaterial {
+    private static final String LEGACY_LIGHT = "t7.f0";
+    private static final String CURRENT_LIGHT = "s7.f0";
     record Size(float width, float height) { }
     record Contract(Field size, Method width, Method height, Method resize) {
         Size read(Drawable drawable) {
@@ -24,13 +26,27 @@ final class NativeCardMaterial {
     private final java.util.function.Function<Class<?>, Contract> lookup;
     private static final ClassValue<Contract> CONTRACTS = new ClassValue<>() {
         @Override protected Contract computeValue(Class<?> type) {
-            if (!type.getName().equals("t7.f0") || !Drawable.class.isAssignableFrom(type)) return null;
-            try { return resolve(type, Reflect.type(type.getClassLoader(), "z9.l")); }
+            String pairName = switch (type.getName()) {
+                case LEGACY_LIGHT -> "z9.l";
+                case CURRENT_LIGHT, "p6.c" -> "y9.l";
+                default -> null;
+            };
+            if (pairName == null || !Drawable.class.isAssignableFrom(type)) return null;
+            try { return resolve(type, Reflect.type(type.getClassLoader(), pairName)); }
             catch (ReflectiveOperationException | LinkageError error) { return null; }
         }
     };
     NativeCardMaterial() { this(CONTRACTS::get); }
     NativeCardMaterial(java.util.function.Function<Class<?>, Contract> lookup) { this.lookup = lookup; }
+    static Class<?> sdkLightType(ClassLoader sdk) throws NoSuchMethodException {
+        for (String name : new String[]{LEGACY_LIGHT, CURRENT_LIGHT}) {
+            try {
+                Class<?> type = Reflect.type(sdk, name);
+                if (CONTRACTS.get(type) != null) return type;
+            } catch (ClassNotFoundException | LinkageError ignored) { }
+        }
+        throw new NoSuchMethodException("Seedling light drawable");
+    }
     static Contract resolve(Class<?> drawableType, Class<?> pairType) throws ReflectiveOperationException {
         if (!Drawable.class.isAssignableFrom(drawableType)) throw new NoSuchMethodException("Native material type");
         return new Contract(Reflect.field(drawableType, "c", pairType),

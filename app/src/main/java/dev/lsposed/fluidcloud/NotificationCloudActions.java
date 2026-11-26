@@ -32,6 +32,7 @@ final class NotificationCloudActions {
     private Bitmap iconPreview, comparisonPreview;
     private final Map<String, FloatingButton> floatingButtons = new HashMap<>();
     private final java.util.Map<String, Runnable> menuCommands = new java.util.LinkedHashMap<>();
+    private android.app.AlertDialog historyDialog;
     private final String action = "com.android.systemui.COLOROS_ENHANCE_NOTIFICATION_" + java.util.UUID.randomUUID();
     NotificationCloudActions(NotificationCloudFeature feature, Context context) {
         this.feature = feature; this.context = context;
@@ -48,7 +49,7 @@ final class NotificationCloudActions {
                     var entry = feature.store.get(floatKey);
                     PendingIntent original = intent.getParcelableExtra("target", PendingIntent.class);
                     if (original != null && entry != null && original.equals(entry.value().getNotification().contentIntent)
-                            && feature.rules().floating(entry.app())) openFloating(floatKey);
+                            && feature.rules().floating(entry.app(), feature.cloneSerial(entry.value()))) openFloating(floatKey);
                     return;
                 }
                 Runnable command = menuCommands.remove(intent.getStringExtra("menu"));
@@ -105,10 +106,21 @@ final class NotificationCloudActions {
     void retainFloatingButtons(Set<String> liveKeys) { floatingButtons.keySet().retainAll(liveKeys); }
     static StatusBarNotification copyMember(List<NotificationCloudStore.Entry<StatusBarNotification>> group,
             NotificationShadePages.Page page) {
-        StatusBarNotification sbn = group.getFirst().value();
+        StatusBarNotification sbn = (page == null ? group.getFirst() : page.anchor()).value();
         StatusBarNotification rendered = sbn.clone();
         Notification n = rendered.getNotification();
         var member = page == null ? group.getLast() : page.member();
+        if (page != null && page.historical()) {
+            Notification snapshot = member.value().getNotification();
+            n.extras = new Bundle(snapshot.extras);
+            String title = snapshot.extras.getString(Notification.EXTRA_TITLE, "");
+            n.extras.putString(Notification.EXTRA_TITLE, title.isEmpty() ? "历史消息" : title + " · 历史");
+            n.when = snapshot.when;
+            n.contentIntent = n.deleteIntent = n.fullScreenIntent = null;
+            n.actions = null;
+            n.contentView = n.bigContentView = n.headsUpContentView = null;
+            return rendered;
+        }
         if (member != group.getFirst()) {
             try { Reflect.call(Reflect.method(Notification.class, "cloneInto", void.class, Notification.class, boolean.class),
                     member.value().getNotification(), n, true); }
@@ -126,12 +138,13 @@ final class NotificationCloudActions {
             NotificationCloudRules rules, NotificationShadePages.Page page) {
         StatusBarNotification rendered = copyMember(group, page);
         Notification n = rendered.getNotification();
+        if (page != null && page.historical()) return rendered;
         var member = page == null ? group.getLast() : page.member();
         var actions = new ArrayList<Notification.Action>();
         if (n.actions != null) for (Notification.Action item : n.actions) if (item != null && item.getRemoteInputs() == null && !item.isAuthenticationRequired()) {
             if (actions.size() < 2) actions.add(item);
         }
-        if (feature.unlocked() && rules.floating(member.app()) && supportsFloating(member.value())) {
+        if (feature.unlocked() && rules.floating(member.app(), feature.cloneSerial(member.value())) && supportsFloating(member.value())) {
             actions.add(new Notification.Action.Builder((Icon) null, "浮窗打开",
                     floatingButton(member.key(), member.revision(), member.value().getNotification().contentIntent)).build());
         }
@@ -199,19 +212,57 @@ final class NotificationCloudActions {
         var group = feature.group(key);
         if (group.isEmpty()) return List.of();
         var result = new ArrayList<MenuAction>();
+        var history = feature.historicalMembers(group);
+        if (!history.isEmpty()) result.add(new MenuAction("查看历史消息 · " + history.size() + " 条",
+                () -> feature.closeCard(() -> showHistory(key))));
+        if (feature.historicalMenu(key)) return result;
         if (group.size() > 1 && feature.groupNavigationSupported()) {
             NotificationCloudGrouping.Identity identity = NotificationCloudGrouping.identity(group.getFirst().value());
             result.add(new MenuAction("查看本组 " + group.size() + " 条通知", () -> feature.openCollectionGroup(identity)));
         }
-        var page = feature.shadePages.current(key);
-        result.addAll(itemActions(page == null ? group.getLast().key() : page.member().key()));
+        result.addAll(itemActions(feature.menuMember(key)));
         return result;
+    }
+
+    private void showHistory(String key) {
+        var items = feature.historicalMembers(feature.group(key));
+        if (items.isEmpty()) return;
+        closeHistory();
+        try {
+            var klass = Reflect.type(context.getClassLoader(), "com.android.systemui.statusbar.phone.SystemUIDialog");
+            var dialog = (android.app.AlertDialog) klass.getConstructor(Context.class).newInstance(context);
+            var text = new StringBuilder();
+            var date = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT);
+            for (var entry : items.reversed()) {
+                var notification = entry.value().getNotification();
+                if (!text.isEmpty()) text.append("\n\n");
+                text.append(date.format(new java.util.Date(notification.when))).append("\n");
+                String title = notification.extras.getString(Notification.EXTRA_TITLE, "");
+                if (!title.isBlank()) text.append(title).append("\n");
+                text.append(notification.extras.getString(Notification.EXTRA_TEXT, ""));
+            }
+            dialog.setTitle("历史消息");
+            dialog.setMessage(text);
+            dialog.setButton(android.content.DialogInterface.BUTTON_POSITIVE, "关闭", (ignored, which) -> dialog.dismiss());
+            dialog.setOnDismissListener(ignored -> { if (historyDialog == dialog) historyDialog = null; });
+            historyDialog = dialog;
+            dialog.show();
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+            feature.failure("Native notification history dialog unavailable", unavailable);
+            closeHistory();
+        }
+    }
+
+    void closeHistory() {
+        var dialog = historyDialog;
+        historyDialog = null;
+        if (dialog != null) dialog.dismiss();
     }
     private List<MenuAction> itemActions(String key) {
         var entry = feature.store.get(key); if (entry == null) return List.of();
         Notification n = entry.value().getNotification();
         var items = new ArrayList<MenuAction>();
-        if (n.contentIntent != null) items.add(new MenuAction("打开这条通知", () -> { if (!feature.open(key)) feature.original(key); }));
+        if (n.contentIntent != null) items.add(new MenuAction("打开通知", () -> { if (!feature.open(key)) feature.original(key); }));
         if (supportsFloating(entry.value())) items.add(new MenuAction("浮窗打开", () -> openFloating(key)));
         if (n.actions != null) for (Notification.Action button : n.actions) if (button != null && button.actionIntent != null) {
             items.add(new MenuAction(button.title == null ? "通知操作" : button.title.toString(), () -> {

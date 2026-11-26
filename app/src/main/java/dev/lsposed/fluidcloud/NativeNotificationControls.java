@@ -22,7 +22,8 @@ final class NativeNotificationControls {
     private int menuGeneration;
 
     @SuppressWarnings("unchecked")
-    NativeNotificationControls(NotificationCloudFeature feature, View root, NotificationPluginRepository binding) throws ReflectiveOperationException {
+    NativeNotificationControls(NotificationCloudFeature feature, NativeNotificationCloud cloud, View root,
+            NotificationPluginRepository binding) throws ReflectiveOperationException {
         this.feature = feature; ClassLoader loader = root.getClass().getClassLoader();
         Class<?> container = Reflect.type(loader, "com.oplus.systemui.plugins.seedling.capsule.ui.view.CapsuleContainer");
         Class<?> owner = Reflect.field(container, "n", Object.class).getType();
@@ -138,6 +139,15 @@ final class NativeNotificationControls {
                 Object item = Reflect.get(clickedItem, event);
                 String selected = (String) Reflect.get(cardKey, item);
                 if (!feature.store.ready(selected)) return chain.proceed();
+                var page = feature.expandedPage(selected);
+                if (page != null) {
+                    if (page.historical() || !feature.canRenderExpandedPage(page)) return null;
+                    var member = page.member();
+                    var target = member.value().getNotification().contentIntent;
+                    if (target == null) return null;
+                    feature.armOpen(member.key(), target);
+                    return cloud.openFromNativeCard(selected, target, chain);
+                }
                 feature.armGroupOpen(selected);
                 return chain.proceed();
             }));

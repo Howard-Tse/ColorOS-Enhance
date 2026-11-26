@@ -4,8 +4,10 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.view.LayoutInflater;
+import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.widget.FrameLayout;
 import dalvik.system.PathClassLoader;
 import dev.howard.colorosenhance.BuildConfig;
@@ -35,6 +37,8 @@ final class NativeNotificationShadePaging {
     private final Method count, selected, offset, replace, location, closeAdapter;
     private final Constructor<?> adapter, spacing;
     private final Map<ViewGroup, Host> hosts = new IdentityHashMap<>();
+    private ExpandedRow expandedRow;
+    private ExpandedActions expandedActions;
     private final List<XposedInterface.HookHandle> hooks = new ArrayList<>();
 
     NativeNotificationShadePaging(NotificationCloudFeature feature, NativeNotificationCloud cloud, Context system,
@@ -113,6 +117,81 @@ final class NativeNotificationShadePaging {
                 return block == requested ? chain.proceed() : chain.proceed(new Object[]{false});
             }));
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) { close(); throw failure; }
+        try {
+            expandedRow = ExpandedRow.resolve(loader);
+            hooks.add(feature.module.hook(expandedRow.layout()).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
+                Object result = chain.proceed();
+                observeExpanded((FrameLayout) chain.getThisObject());
+                return result;
+            }));
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+            expandedRow = null;
+            feature.failure("Expanded notification group pager unavailable", unavailable);
+        }
+        if (expandedRow != null) try {
+            expandedActions = ExpandedActions.resolve(loader, expandedRow);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+            feature.failure("Expanded notification group native actions unavailable", unavailable);
+        }
+    }
+
+    private record ExpandedActions(Constructor<?> longPress, Constructor<?> click, Field item, Field owner,
+                                   Method blocked, Method dispatch) {
+        static ExpandedActions resolve(ClassLoader loader, ExpandedRow card) throws ReflectiveOperationException {
+            String base = PLUGIN + ".seedling.card.ui.";
+            Class<?> hold = Reflect.type(loader, base + "model.e");
+            Class<?> tap = Reflect.type(loader, base + "model.c");
+            Field owner = Reflect.field(Reflect.type(loader, base + "view.CardContainer"), "b", Object.class);
+            Method blocked = Reflect.method(card.item().getDeclaringClass(), "getBlockViewState", boolean.class);
+            Class<?> model = card.item().getType();
+            return new ExpandedActions(hold.getConstructor(model), tap.getConstructor(model), card.item(), owner, blocked,
+                    Reflect.method(owner.getType(), "f", void.class, hold.getSuperclass()));
+        }
+        boolean send(View row, boolean menu) throws ReflectiveOperationException {
+            if (!(row.getParent() instanceof View list) || !owner.getDeclaringClass().isInstance(list)
+                    || Boolean.TRUE.equals(Reflect.call(blocked, row))) return false;
+            Object viewModel = Reflect.get(owner, list), rowItem = Reflect.get(item, row);
+            if (viewModel == null || rowItem == null) return false;
+            if (menu) row.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+            Reflect.call(dispatch, viewModel, (menu ? longPress : click).newInstance(rowItem));
+            return true;
+        }
+    }
+
+    private record ExpandedRow(Method layout, Method content, Field item, Field key) {
+        static ExpandedRow resolve(ClassLoader loader) throws ReflectiveOperationException {
+            String base = PLUGIN + ".seedling.card.ui.";
+            Class<?> card = Reflect.type(loader, base + "view.CardView");
+            Class<?> model = Reflect.type(loader, base + "model.o");
+            return new ExpandedRow(Reflect.method(card, "onLayout", void.class, boolean.class,
+                    int.class, int.class, int.class, int.class),
+                    Reflect.method(card, "getContentView", View.class), Reflect.field(card, "h", model),
+                    Reflect.field(model, "a", String.class));
+        }
+    }
+
+    boolean supportsExpanded() { return expandedRow != null; }
+
+    private void observeExpanded(FrameLayout row) {
+        if (expandedRow == null || hosts.get(row) == null && feature.expandedPages.isEmpty()) return;
+        Object item = Reflect.get(expandedRow.item(), row);
+        String key = item == null ? null : (String) Reflect.get(expandedRow.key(), item);
+        var page = key == null ? null : feature.expandedPages.current(key);
+        bindHost(row, page, Reflect.call(expandedRow.content(), row), true);
+    }
+
+    NotificationShadePages.Page expandedPage(String key) {
+        for (Host host : hosts.values()) if (host.expanded && host.active() && host.page.rowKey().equals(key))
+            return feature.expandedPages.current(key);
+        return null;
+    }
+
+    boolean handlesExpandedSwipe(View row, int direction) {
+        Host host = hosts.get(row);
+        if (host == null || !host.expanded || !host.active()) return false;
+        int currentPage = (int) Reflect.call(current, host.pager);
+        int next = currentPage + (host.pager.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL ? -direction : direction);
+        return (int) Reflect.call(scrollState, host.pager) != 0 || next >= 0 && next < host.keys.size();
     }
 
     private static int id(Resources res, String type, String name) {
@@ -133,8 +212,13 @@ final class NativeNotificationShadePaging {
         if (host == null && feature.shadePages.isEmpty()) return;
         Object model = Reflect.call(entry, row);
         var page = model == null ? null : feature.shadePages.current((String) Reflect.call(key, model));
+        bindHost(row, page, model == null ? null : Reflect.call(content, model), false);
+    }
+
+    private void bindHost(ViewGroup row, NotificationShadePages.Page page, Object contentView, boolean expanded) {
+        Host host = hosts.get(row);
         if (page == null || page.locked() == feature.unlocked() || !row.isAttachedToWindow()
-                || !(Reflect.call(content, model) instanceof FrameLayout body)
+                || !(contentView instanceof FrameLayout body)
                 || body.getParent() != row || !(row instanceof FrameLayout)) {
             if (host != null) host.close();
             return;
@@ -142,15 +226,20 @@ final class NativeNotificationShadePaging {
         if (host != null && (host.body != body || host.page.locked() != page.locked()
                 || !host.page.rowKey().equals(page.rowKey()))) { host.close(); host = null; }
         if (host == null) {
-            host = new Host(row, body, page);
+            host = new Host(row, body, page, expanded);
             hosts.put(row, host);
             row.addOnAttachStateChangeListener(host);
         }
         if (host.page == page && host.mount != null) return;
-        host.page = page;
+        if (expanded) host.pendingPage = page;
+        else host.page = page;
         host.schedule();
     }
-    void refresh() { for (ViewGroup row : List.copyOf(hosts.keySet())) observe(row); }
+    void refresh() {
+        for (Host host : List.copyOf(hosts.values())) {
+            if (host.expanded) observeExpanded((FrameLayout) host.row); else observe(host.row);
+        }
+    }
     void close() {
         hooks.forEach(XposedInterface.HookHandle::unhook);
         for (Host host : List.copyOf(hosts.values())) host.close();
@@ -161,23 +250,28 @@ final class NativeNotificationShadePaging {
     private final class Host implements View.OnAttachStateChangeListener {
         final ViewGroup row;
         final FrameLayout body;
+        final boolean expanded;
+        final NotificationPagerMount.Expanded expandedGeometry;
         final Map<FrameLayout, Cell> cells = new IdentityHashMap<>();
         final Runnable syncTask = this::sync, commitTask = this::commit;
         final Runnable resizeTask = this::resize;
+        final ViewTreeObserver.OnPreDrawListener mirror = this::mirrorBody;
         final View.OnLayoutChangeListener measured = (v,l,t,r,b,ol,ot,or,ob) -> {
             if (r-l != or-ol || b-t != ob-ot) queueResize();
         };
         NotificationPagerMount mount;
-        NotificationShadePages.Page page;
+        NotificationShadePages.Page page, pendingPage;
         ViewGroup shell, pager;
         View dots;
         Object prototype, bridge;
         List<String> keys = List.of();
         boolean queued, resizeQueued, disposed, failed, changing;
         float position;
-        Host(ViewGroup row, FrameLayout body, NotificationShadePages.Page page) {
-            this.row = row; this.body = body; this.page = page;
+        Host(ViewGroup row, FrameLayout body, NotificationShadePages.Page page, boolean expanded) {
+            this.row = row; this.body = body; this.page = page; this.expanded = expanded;
+            expandedGeometry = expanded ? new NotificationPagerMount.Expanded(row, body) : null;
         }
+        boolean active() { return !failed && !disposed && mount != null && shell != null && shell.isShown(); }
         void schedule() {
             if (queued || disposed || failed) return;
             queued = true; body.post(syncTask);
@@ -186,10 +280,13 @@ final class NativeNotificationShadePaging {
         void sync() {
             queued = false;
             if (disposed || failed || !body.isAttachedToWindow()) return;
+            if (expanded && pager != null && (int) Reflect.call(scrollState, pager) != 0) return;
+            if (pendingPage != null) { page = pendingPage; pendingPage = null; }
             changing = true;
             try {
                 if (shell == null) {
-                    prototype = templates.prototype(cloud.shadeWrappers(page.rowKey()), body);
+                    var wrappers = expanded ? cloud.expandedWrappers(page.rowKey()) : cloud.shadeWrappers(page.rowKey());
+                    prototype = templates.prototype(wrappers, body);
                     if (prototype == null) return;
                     shell = (ViewGroup) LayoutInflater.from(plugin).inflate(layout, body, false);
                     pager = shell.findViewById(pagerId);
@@ -198,14 +295,19 @@ final class NativeNotificationShadePaging {
                     bridge = adapter.newInstance(pager.getChildAt(0), (BiConsumer<FrameLayout, String>) this::bind,
                             (Consumer<FrameLayout>) this::release, (Runnable) this::moved, longPress);
                     Reflect.call(setAdapter, pager, bridge);
-                    Reflect.call(limit, pager, 3);
+                    Reflect.call(limit, pager, expanded ? 1 : 3);
                     pager.setClipChildren(false);
                     Reflect.call(transformer, pager, spacing.newInstance(gap, 1));
                     dots.setVisibility(View.VISIBLE);
                 }
                 if (mount == null) {
                     if (body.getHeight() <= 0 || body.getVisibility() != View.VISIBLE) return;
-                    mount = new NotificationPagerMount((FrameLayout) row, body, shell, (List<View>) Reflect.get(translatedViews, row));
+                    mount = new NotificationPagerMount((FrameLayout) row, body, shell,
+                            expanded ? new ArrayList<>() : (List<View>) Reflect.get(translatedViews, row));
+                    if (expandedGeometry != null) {
+                        expandedGeometry.mount(shell);
+                        row.getViewTreeObserver().addOnPreDrawListener(mirror);
+                    }
                 }
                 List<String> ordered = page.members().reversed().stream().map(e -> e.key()).toList();
                 if (!keys.equals(ordered)) {
@@ -223,6 +325,10 @@ final class NativeNotificationShadePaging {
                 queueResize();
             } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { fail(error); }
             finally { changing = false; }
+        }
+        boolean mirrorBody() {
+            expandedGeometry.matchBody();
+            return true;
         }
         void queueResize() {
             if (!disposed && !failed && !resizeQueued) {
@@ -242,7 +348,7 @@ final class NativeNotificationShadePaging {
             if (mount == null || disposed || failed) return;
             // The keyguard positions its clock and widgets relative to the measured row.
             // Even a template measurement arriving mid-swipe must wait for the settled page.
-            if (page.locked() && !NotificationPagerMount.settled(position,
+            if ((page.locked() || expanded) && !NotificationPagerMount.settled(position,
                     (int) Reflect.call(current, pager), (int) Reflect.call(scrollState, pager))) return;
             int index = (int) position;
             float fraction = position - index;
@@ -259,32 +365,74 @@ final class NativeNotificationShadePaging {
             boolean reuse = old != null && old.key().equals(member);
             if (!reuse) release(holder);
             try {
-                var item = cloud.createPage(templates, prototype, target, reuse ? old.template() : null);
+                var item = cloud.createPage(templates, prototype, target, reuse ? old.template() : null, expanded);
                 cells.put(holder, new Cell(member, target.member().revision(), item));
                 if (reuse) return;
                 item.view().addOnLayoutChangeListener(measured);
                 holder.addView(item.view(), new FrameLayout.LayoutParams(-1, -2));
                 holder.setOnClickListener(v -> {
                     int index = keys.indexOf(member);
-                    if (index >= 0 && feature.selectShadePage(page, index)) row.performClick();
+                    if (index < 0) return;
+                    var visible = page.at(index);
+                    if (visible.historical()) return;
+                    if (expanded) {
+                        if ((int) Reflect.call(scrollState, pager) == 0 && selectExpanded(member))
+                            clickExpanded(member, item.view());
+                    } else if (feature.selectShadePage(page, index)) row.performClick();
                 });
             } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { fail(error); }
+        }
+        private void clickExpanded(String member, View anchor) {
+            try {
+                if (expandedActions != null) {
+                    expandedActions.send(row, false);
+                    return;
+                }
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+                feature.failure("Native grouped notification card click unavailable", unavailable);
+                return;
+            }
+            feature.open(member, anchor);
         }
         void longPress(String member) {
             if (disposed || failed || changing || page.locked() || !row.isShown()) return;
             int index = keys.indexOf(member);
             try {
                 if (index < 0 || index != (int) Reflect.call(current, pager)
-                        || (int) Reflect.call(scrollState, pager) != 0 || !feature.selectShadePage(page, index)) return;
+                        || (int) Reflect.call(scrollState, pager) != 0) return;
+                if (expanded) {
+                    if (selectExpanded(member)) {
+                        if (expandedActions != null) expandedActions.send(row, true);
+                        else if (!body.performLongClick()) row.performLongClick();
+                    }
+                    return;
+                }
+                if (!feature.selectShadePage(page, index)) return;
                 // Same entry point as OplusSwipeHelperExImpl.doLongClickCallback. The row
                 // owns haptics, cancellation of the current touch and the ColorOS popup.
                 if (rowLongClick != null) {
                     row.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_VIEW_LONG_CLICKED);
                     Reflect.call(rowLongClick, row, (Object) null);
                 } else row.performLongClick();
-            } catch (RuntimeException | LinkageError unavailable) {
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
                 feature.failure("Grouped notification long press unavailable", unavailable);
             }
+        }
+        boolean selectExpanded(String member) {
+            var live = feature.expandedPages.current(page.rowKey());
+            if (live == null) return false;
+            for (int i = 0; i < live.members().size(); i++) {
+                if (!member.equals(live.members().get(i).key())) continue;
+                var target = live.at(live.members().size() - 1 - i);
+                if (!feature.canRenderExpandedPage(target)) return false;
+                feature.expandedPages.turned(target);
+                if (live != page) {
+                    pendingPage = target;
+                    schedule();
+                } else page = target;
+                return true;
+            }
+            return false;
         }
         void moved() {
             if (disposed || failed || changing || keys.isEmpty() || bridge == null) return;
@@ -292,7 +440,7 @@ final class NativeNotificationShadePaging {
             if (at >= 0) {
                 at = Math.min(keys.size() - 1, at);
                 position = at;
-                if (!page.locked()) {
+                if (!page.locked() && !expanded) {
                     if (row.isInLayout()) queueResize();
                     else resize();
                 }
@@ -318,6 +466,11 @@ final class NativeNotificationShadePaging {
             position = index;
             resize();
             Reflect.call(selected, dots, index);
+            if (expanded) {
+                selectExpanded(keys.get(index));
+                if (pendingPage != null) schedule();
+                return;
+            }
             var live = feature.shadePages.current(page.rowKey());
             if (live != null && live.number() != index + 1 && feature.selectShadePage(page, index))
                 page = feature.shadePages.current(page.rowKey());
@@ -338,6 +491,10 @@ final class NativeNotificationShadePaging {
         }
         void unmount() {
             row.removeCallbacks(resizeTask);
+            if (expandedGeometry != null) {
+                row.getViewTreeObserver().removeOnPreDrawListener(mirror);
+                expandedGeometry.close();
+            }
             if (bridge != null) {
                 Reflect.call(closeAdapter, bridge);
                 Reflect.call(setAdapter, pager, new Object[]{null});

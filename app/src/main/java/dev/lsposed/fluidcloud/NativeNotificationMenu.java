@@ -33,15 +33,14 @@ final class NativeNotificationMenu {
             if (!feature.store.ready(selected)) return chain.proceed();
             List<?> previous = (List<?>) Reflect.call(rows, model);
             List<Object> next = new ArrayList<>();
-            if (previous != null) for (Object existing : previous) {
+            if (!feature.historicalMenu(selected) && previous != null) for (Object existing : previous) {
                 var launcher = (PendingIntent) Reflect.call(intent, existing);
                 if (launcher == null) continue;
                 var target = (Intent) Reflect.call(request, launcher);
                 if (target == null || STOCK_SETTINGS.equals(target.getAction()) || MODULE_SCHEME.equals(target.getScheme())) continue;
                 next.add(existing);
             }
-            var page = feature.shadePages.current(selected);
-            String member = page == null ? selected : page.member().key();
+            String member = feature.menuMember(selected);
             for (var command : actions.nativeMenu(selected))
                 next.add(item.newInstance(selected, null, command.label(), actions.menuIntent(member, command)));
             if (!next.isEmpty()) Reflect.call(setRows, model, next);

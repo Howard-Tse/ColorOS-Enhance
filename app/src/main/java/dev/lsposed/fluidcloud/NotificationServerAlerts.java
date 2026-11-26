@@ -10,6 +10,7 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.os.UserHandle;
 import android.os.VibrationEffect;
 import android.service.notification.StatusBarNotification;
 import dev.howard.colorosenhance.notifications.NotificationCloudPolicy;
@@ -18,13 +19,15 @@ import dev.howard.colorosenhance.notifications.NotificationMetadataProvider;
 import io.github.libxposed.api.XposedInterface;
 import java.lang.reflect.Method;
 import java.util.Map;
+import java.util.HashMap;
 
 /** Scope muting to the native sound/vibration getters inside one eligible attention dispatch. */
 final class NotificationServerAlerts {
+    private record Renderer(IBinder token, Map<UserHandle, Integer> clones) { }
     private final ThreadLocal<Object> quiet = new ThreadLocal<>();
     private final Method sbn, importance, channel;
     private volatile Context context;
-    private volatile IBinder renderer;
+    private volatile Renderer renderer;
     private volatile NotificationCloudRules rules = NotificationCloudRules.DEFAULT;
     private volatile boolean enabled;
     private Handler worker;
@@ -113,22 +116,29 @@ final class NotificationServerAlerts {
         try {
             var result = context.getContentResolver().call(NotificationMetadataProvider.URI, "read_alert_renderer", null, null);
             IBinder token = result == null ? null : result.getBinder("renderer");
-            renderer = token != null && token.isBinderAlive() ? token : null;
+            var clones = result == null ? null : result.getParcelableArrayList("clone_users", UserHandle.class);
+            var serials = result == null ? null : result.getIntArray("clone_serials");
+            Map<UserHandle, Integer> profiles = new HashMap<>();
+            if (clones != null && serials != null && clones.size() == serials.length)
+                for (int i = 0; i < serials.length; i++) if (serials[i] >= 0) profiles.put(clones.get(i), serials[i]);
+            renderer = token != null && token.isBinderAlive()
+                    ? new Renderer(token, Map.copyOf(profiles)) : null;
         } catch (RuntimeException unavailable) { renderer = null; }
     }
 
     private boolean canMute(Object item) {
-        IBinder state = renderer;
-        if (!enabled || context == null || state == null || !state.isBinderAlive()) return false;
+        Renderer state = renderer;
+        if (!enabled || context == null || state == null || !state.token().isBinderAlive()) return false;
         PowerManager power = context.getSystemService(PowerManager.class);
         KeyguardManager lock = context.getSystemService(KeyguardManager.class);
         if (power == null || !power.isInteractive() || lock == null || lock.isKeyguardLocked()) return false;
         StatusBarNotification original = (StatusBarNotification) Reflect.call(sbn, item);
-        if (original == null || Notification.CATEGORY_CALL.equals(original.getNotification().category)
-                || !rules.accepts(original.getPackageName())) return false;
+        if (original == null || Notification.CATEGORY_CALL.equals(original.getNotification().category)) return false;
         NotificationChannel rowChannel = (NotificationChannel) Reflect.call(channel, item);
         int channelImportance = rowChannel == null ? android.app.NotificationManager.IMPORTANCE_UNSPECIFIED : rowChannel.getImportance();
-        return NotificationCloudPolicy.evaluate(original, android.os.Process.myUserHandle(),
+        int serial = state.clones().getOrDefault(original.getUser(), NotificationCloudRules.MAIN_APP);
+        boolean acceptedUser = android.os.Process.myUserHandle().equals(original.getUser()) || serial >= 0;
+        return NotificationCloudPolicy.evaluate(original, acceptedUser, serial,
                 (int) Reflect.call(importance, item), channelImportance, false, rules) != NotificationCloudRules.Mode.NATIVE;
     }
 }

@@ -1,12 +1,12 @@
 # ColorOS 增强
 
-面向 ColorOS 16 / Android 16、ColorOS 17 / Android 17 的 LSPosed 模块。作者为 **Howard**（[Howard-Tse](https://github.com/Howard-Tse)）。当前稳定版本为 **1.32.5**，应用包名为 `io.github.howard_tse.colorosenhance`。
+面向 ColorOS 16 / Android 16、ColorOS 17 / Android 17 的 LSPosed 模块。作者为 **Howard**（[Howard-Tse](https://github.com/Howard-Tse)）。当前稳定版本为 **1.32.7**，应用包名为 `io.github.howard_tse.colorosenhance`。
 
-[1.32.5 正式版下载与更新说明](https://github.com/Howard-Tse/ColorOS-Enhance/releases/tag/77-1.32.5)
+[1.32.7 正式版下载与更新说明](https://github.com/Howard-Tse/ColorOS-Enhance/releases/tag/79-1.32.7)
 
-[1.32.6 预发布版下载与更新说明](https://github.com/Howard-Tse/ColorOS-Enhance/releases/tag/78-1.32.6)。从 1.32.5 或更早版本首次加入这轮测试，请在此下载 APK 并覆盖安装；之后可开启「优先检查预发布版本」，在应用内发现后续预发布。
+在支持原生分页组件的系统上，合并的通知流体云可在展开卡片、通知中心和锁屏列表左右翻页，底部圆点指示当前页。通知中心媒体卡片使用普通样式，支持歌词更新和多媒体翻页。「流体云 → 展开卡片」可分别调整左右外边距、卡片间距和正文内边距，0 dp 为原厂间距。
 
-在 1.32.6 预发布版中，合并的通知流体云可在通知中心和锁屏列表左右翻页，底部圆点指示当前页。通知中心媒体卡片使用普通样式，支持歌词更新和多媒体翻页。「流体云 → 展开卡片」可分别调整左右外边距、卡片间距和正文内边距，0 dp 为原厂间距。
+通知转流体云支持为同一应用的多个 ColorOS 分身单独配置规则，也可沿用本体配置。可按需开启「保留被替换的消息」，或在「保留原通知」时开启「禁止原通知横幅」。两项均默认关闭。具体行为见[通知转换说明](docs/NOTIFICATION_CLOUD.md)。
 
 长按合并卡片可进入收纳页并展开本组通知。可在「原通知处理」开启「锁屏时保留通知转流体云」，再按需开启「锁屏时显示通知流体云卡片」。两个选项均默认关闭，并遵循系统锁屏隐私设置。
 

@@ -182,7 +182,7 @@ final class NativeNotificationCollectionEntry {
 
         int tint = primaryText(context);
         TextView title = notificationTitle(context, body);
-        title.setText("已转为流体云卡片");
+        title.setText("已转为流体云");
         title.setTextColor(tint);
         title.setMaxLines(2);
         title.setEllipsize(TextUtils.TruncateAt.END);

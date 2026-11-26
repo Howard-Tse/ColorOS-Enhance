@@ -17,10 +17,12 @@ final class NotificationChannelEditor extends ScrollView {
     private static final List<String> MODES = List.of("不转换，保留原厂", "仅胶囊", "胶囊并自动展开");
     private final NotificationCloudRules original;
     private final String pkg;
+    private final int serial;
+    private final java.util.function.Consumer<Bundle> instanceResult;
     private final Map<String, NotificationCloudRules.Mode> overrides = new LinkedHashMap<>();
     private final LinearLayout body, existing;
     private final EditText manual;
-    private final CheckBox allowed, denied;
+    private final CheckBox allowed, denied, inherit;
     private final Spinner channels, mode, appMode, floating;
     private final TextView status;
     private final List<String> ids = new ArrayList<>();
@@ -29,31 +31,44 @@ final class NotificationChannelEditor extends ScrollView {
     private int request;
     private String defaultStatus;
 
-    NotificationChannelEditor(Context context, NotificationCloudRules rules, String pkg, String label, Runnable back) {
+    NotificationChannelEditor(Context context, NotificationCloudRules rules, String pkg, int serial,
+            java.util.function.Consumer<Bundle> instanceResult) {
         super(context);
         original = rules;
         this.pkg = pkg;
-        rules.overrides().forEach((key, value) -> {
-            if (key.startsWith(pkg + "/")) overrides.put(key, value);
-        });
+        this.serial = serial;
+        this.instanceResult = instanceResult;
+        var clone = rules.cloneRule(pkg, serial);
+        var config = clone == null ? rules.mainRule(pkg) : clone.app();
+        overrides.putAll(config.channels());
+        color = NotificationAppPicker.textColor(context);
+        var outer = new LinearLayout(context);
+        outer.setOrientation(LinearLayout.VERTICAL);
+        addView(outer);
+        if (serial == NotificationCloudRules.MAIN_APP) {
+            inherit = null;
+        } else {
+            inherit = new CheckBox(context);
+            inherit.setText("跟随本体配置");
+            inherit.setTextColor(color);
+            inherit.setChecked(clone == null || clone.inherit());
+            outer.addView(inherit);
+        }
         body = new LinearLayout(context);
         body.setOrientation(LinearLayout.VERTICAL);
         int padding = Math.round(12 * getResources().getDisplayMetrics().density);
         body.setPadding(padding, padding, padding, padding);
-        addView(body);
-        color = NotificationAppPicker.textColor(context);
-        button("‹ 返回应用列表", back);
-        text(label).setTextSize(17);
-        allowed = check("加入白名单", rules.allowed().contains(pkg));
-        denied = check("加入黑名单", rules.denied().contains(pkg));
+        outer.addView(body);
+        allowed = check("加入白名单", config.allowed());
+        denied = check("加入黑名单", config.denied());
         text("当前使用" + (rules.denylist() ? "黑名单" : "白名单") + "模式。只有符合名单规则的通知才会转换。");
         floating = select("在卡片显示浮窗按钮", List.of("跟随全局", "开启", "关闭"));
-        var override = rules.appFloating().get(pkg);
+        var override = config.floating();
         floating.setSelection(override == null ? 0 : override.ordinal() + 1);
         List<String> defaults = new ArrayList<>(List.of("按通知种类"));
         defaults.addAll(MODES);
         appMode = select("应用默认转换方式", defaults);
-        var type = rules.overrides().get(pkg);
+        var type = config.mode();
         appMode.setSelection(type == null ? 0 : type.ordinal() + 1);
         text("渠道设置优先于应用默认。可选择实际渠道，或手动输入 ID。");
         button("查询／刷新通知渠道", this::query);
@@ -72,9 +87,19 @@ final class NotificationChannelEditor extends ScrollView {
         existing.setOrientation(LinearLayout.VERTICAL);
         body.addView(existing);
         render();
+        if (inherit != null) {
+            body.setVisibility(inherit.isChecked() ? GONE : VISIBLE);
+            inherit.setOnCheckedChangeListener((ignored, checked) -> {
+                body.setVisibility(checked ? GONE : VISIBLE);
+                if (!checked) query();
+            });
+        }
     }
 
-    @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); query(); }
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (inherit == null || !inherit.isChecked()) query();
+    }
     @Override protected void onDetachedFromWindow() { request++; super.onDetachedFromWindow(); }
 
     private void saveChannel() {
@@ -84,7 +109,7 @@ final class NotificationChannelEditor extends ScrollView {
             manual.setError(channel.isEmpty() ? "请选择或填写渠道 ID" : "渠道 ID 过长");
             return;
         }
-        overrides.put(pkg + "/" + channel, NotificationCloudRules.Mode.values()[mode.getSelectedItemPosition()]);
+        overrides.put(channel, NotificationCloudRules.Mode.values()[mode.getSelectedItemPosition()]);
         manual.setText("");
         status.setText("已添加规则，保存后生效。");
         render();
@@ -125,6 +150,7 @@ final class NotificationChannelEditor extends ScrollView {
         status.setText(defaultStatus);
         Bundle args = new Bundle();
         args.putString("package", pkg);
+        args.putInt("serial", serial);
         fetch(generation, args, 0);
     }
     private void fetch(int generation, Bundle args, int attempt) {
@@ -138,6 +164,7 @@ final class NotificationChannelEditor extends ScrollView {
                 if (generation != request || !isAttachedToWindow()) return;
                 if (result != null && result.getBoolean("ready")) {
                     setChannels(result);
+                    if (serial == NotificationCloudRules.MAIN_APP) instanceResult.accept(result);
                     status.setText(ids.size() == 1 ? "尚未查到渠道，可让应用先发一条通知再刷新。"
                             : result.getString("source", "已查到通知渠道"));
                 } else if (result == null || attempt >= 12) {
@@ -165,17 +192,25 @@ final class NotificationChannelEditor extends ScrollView {
         existing.removeAllViews();
         for (var item : overrides.entrySet()) {
             Button view = new Button(getContext());
-            view.setText(item.getKey().substring(pkg.length() + 1) + "\n" + NotificationCloudRules.label(item.getValue()) + " · 移除");
+            view.setText(item.getKey() + "\n" + NotificationCloudRules.label(item.getValue()) + " · 移除");
             view.setOnClickListener(ignored -> { overrides.remove(item.getKey()); render(); });
             existing.addView(view);
         }
     }
     NotificationCloudRules value() {
-        var values = new LinkedHashMap<>(overrides);
         int position = appMode.getSelectedItemPosition();
-        if (position > 0) values.put(pkg, NotificationCloudRules.Mode.values()[position - 1]);
+        var defaultMode = position > 0 ? NotificationCloudRules.Mode.values()[position - 1] : null;
         int floatMode = floating.getSelectedItemPosition();
+        var floatingRule = floatMode <= 0 ? null : NotificationCloudRules.Floating.values()[floatMode - 1];
+        if (inherit != null) {
+            if (inherit.isChecked() && original.cloneRule(pkg, serial) == null) return original;
+            return original.editClone(pkg, serial, new NotificationCloudRules.CloneRule(inherit.isChecked(),
+                    new NotificationCloudRules.AppRule(allowed.isChecked(), denied.isChecked(), floatingRule, defaultMode, overrides)));
+        }
+        var values = new LinkedHashMap<String, NotificationCloudRules.Mode>();
+        overrides.forEach((channel, value) -> values.put(pkg + "/" + channel, value));
+        if (defaultMode != null) values.put(pkg, defaultMode);
         return original.editApp(pkg, allowed.isChecked(), denied.isChecked(),
-                floatMode <= 0 ? null : NotificationCloudRules.Floating.values()[floatMode - 1], values);
+                floatingRule, values);
     }
 }

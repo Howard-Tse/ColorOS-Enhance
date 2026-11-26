@@ -1,6 +1,7 @@
 package dev.lsposed.fluidcloud;
 
 import android.app.Notification;
+import android.os.UserHandle;
 import android.service.notification.StatusBarNotification;
 import dev.howard.colorosenhance.notifications.NotificationCloudStore;
 import java.util.ArrayList;
@@ -15,9 +16,13 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class) @Config(sdk = 36)
 public class NotificationCloudGroupingTest {
     private NotificationCloudStore.Entry<StatusBarNotification> item(String pkg, int id, String conversation) {
+        return item(pkg, id, conversation, 12345);
+    }
+
+    private NotificationCloudStore.Entry<StatusBarNotification> item(String pkg, int id, String conversation, int uid) {
         var n = new Notification.Builder(RuntimeEnvironment.getApplication(), "test").setSmallIcon(android.R.drawable.stat_notify_more)
                 .setContentTitle("Test").setShortcutId(conversation).build();
-        var sbn = new StatusBarNotification(pkg, pkg, id, null, 12345, 0, 0, n, android.os.Process.myUserHandle(), id);
+        var sbn = new StatusBarNotification(pkg, pkg, id, null, uid, 0, 0, n, UserHandle.getUserHandleForUid(uid), id);
         return new NotificationCloudStore.Entry<>(sbn.getKey(), pkg, "test", sbn, id + 1, false);
     }
     @Test public void groupsAreSeparateForAppsAndConversationsAndPreserveRepresentative() {
@@ -25,6 +30,38 @@ public class NotificationCloudGroupingTest {
         var c = item("first.app", 3, "two"); var d = item("second.app", 4, "one");
         var groups = NotificationCloudGrouping.groups(List.of(a, b, c, d), true);
         assertEquals(3, groups.size()); assertEquals(List.of(a, b), groups.get(0)); assertSame(a, groups.get(0).get(0));
+    }
+    @Test public void mainAppAndEachCloneKeepSeparateGroupsAndRenderIdentity() {
+        var main = item("test.app", 1, "one");
+        var firstClone = item("test.app", 1, "one", 1_112_345);
+        var secondClone = item("test.app", 1, "one", 2_112_345);
+        var secondCloneUpdate = item("test.app", 2, "one", 2_112_345);
+        var groups = NotificationCloudGrouping.groups(List.of(main, firstClone, secondClone, secondCloneUpdate), true);
+        assertEquals(List.of(List.of(main), List.of(firstClone), List.of(secondClone, secondCloneUpdate)), groups);
+        var render = NotificationCloudActions.copyMember(groups.getLast(), null);
+        assertEquals(secondClone.key(), render.getKey());
+        assertEquals(secondClone.value().getUser(), render.getUser());
+        assertEquals(secondClone.value().getUid(), render.getUid());
+    }
+    @Test public void cloneBadgeAppearsOnlyOnTheRenderedCloneTitle() {
+        var owner = item("test.app", 1, null).value();
+        var clone = item("test.app", 1, null, 1_112_345).value();
+        var rendered = clone.clone();
+        var badge = new NotificationCloneBadge(RuntimeEnvironment.getApplication());
+        badge.decorate(owner, -1);
+        badge.decorate(rendered, 11);
+        assertEquals("Test", owner.getNotification().extras.getCharSequence(Notification.EXTRA_TITLE).toString());
+        assertEquals("Test", clone.getNotification().extras.getCharSequence(Notification.EXTRA_TITLE).toString());
+        assertEquals("Test\u00a0分身", rendered.getNotification().extras.getCharSequence(Notification.EXTRA_TITLE).toString());
+        assertNull(owner.getNotification().extras.getParcelable(NotificationCloneBadge.CAPSULE_ICON));
+        assertNull(clone.getNotification().extras.getParcelable(NotificationCloneBadge.CAPSULE_ICON));
+        var first = rendered.getNotification().extras.getParcelable(
+                NotificationCloneBadge.CAPSULE_ICON, android.graphics.drawable.Icon.class);
+        assertNotNull(first);
+        var next = clone.clone();
+        badge.decorate(next, 11);
+        assertSame(first, next.getNotification().extras.getParcelable(NotificationCloneBadge.CAPSULE_ICON,
+                android.graphics.drawable.Icon.class));
     }
     @Test public void individualModeDoesNotDropNotificationsPastTheNativeFourCandidateLimit() {
         var items = new ArrayList<NotificationCloudStore.Entry<StatusBarNotification>>();

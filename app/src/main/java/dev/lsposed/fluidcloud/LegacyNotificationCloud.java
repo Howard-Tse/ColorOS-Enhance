@@ -41,6 +41,7 @@ final class LegacyNotificationCloud implements NotificationCloudRenderer {
     private final Field cardOwner;
     private final Method viewItem;
     private final Field viewKey;
+    private NativeNotificationCardTouch cardTouch;
 
     LegacyNotificationCloud(NotificationCloudFeature feature, ClassLoader loader, Context host)
             throws ReflectiveOperationException {
@@ -123,7 +124,7 @@ final class LegacyNotificationCloud implements NotificationCloudRenderer {
             hooks.add(feature.module.hook(swipe).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
                 Object result = chain.proceed();
                 String selected = (String) Reflect.get(cardKey, chain.getArg(0));
-                if (projections.containsKey(selected)) feature.dismissCard(selected);
+                if (cardTouch == null && projections.containsKey(selected)) feature.dismissCard(selected);
                 return result;
             }));
             hooks.add(feature.module.hook(measure).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
@@ -143,6 +144,14 @@ final class LegacyNotificationCloud implements NotificationCloudRenderer {
         } catch (RuntimeException | LinkageError failure) {
             hooks.forEach(XposedInterface.HookHandle::unhook);
             throw failure;
+        }
+        try {
+            Class<?> container = Reflect.type(loader, NativeCameraCard.VIEWS + "CardContainer");
+            Class<?> cardView = Reflect.type(loader, NativeCameraCard.VIEWS + "CardView");
+            Field item = Reflect.uniqueField(cardView, f -> Reflect.instance(f) && f.getType() == cardItem);
+            cardTouch = new NativeNotificationCardTouch(feature, container, cardView, cardItem, item.getName());
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+            feature.failure("Legacy notification swipe animation unavailable", unavailable);
         }
         try { installShadeDismissal(host.getClassLoader()); }
         catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
@@ -198,6 +207,11 @@ final class LegacyNotificationCloud implements NotificationCloudRenderer {
             Projection previous = projections.get(key);
             var version = NotificationCloudGrouping.renderVersion(group);
             boolean popup = autoExpand.contains(group.getLast().key());
+            if (previous != null && lockedPlacement == lockCards && showShade == (previous.shade() != null)
+                    && cardTouch != null && cardTouch.holds(key) && !popup) {
+                next.put(key, previous);
+                continue;
+            }
             if (lockedPlacement == lockCards && previous != null && version.equals(previous.version()) && rules.equals(previousRules)
                     && showShade == (previous.shade() != null) && !popup) {
                 next.put(key, new Projection(previous.capsule(), previous.shade(), version, group));
@@ -297,6 +311,7 @@ final class LegacyNotificationCloud implements NotificationCloudRenderer {
     @Override public void close() {
         try { update(List.of(), NotificationCloudRules.DEFAULT); }
         finally {
+            if (cardTouch != null) cardTouch.close();
             hooks.forEach(XposedInterface.HookHandle::unhook);
             hooks.clear();
         }

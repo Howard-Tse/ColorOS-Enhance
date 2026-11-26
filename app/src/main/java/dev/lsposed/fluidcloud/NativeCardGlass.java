@@ -212,13 +212,7 @@ final class NativeCardGlass {
     }
 
     private void installCompactSizing(ClassLoader sdk) throws ReflectiveOperationException {
-        Class<?> anchorLayout;
-        try {
-            anchorLayout = Reflect.type(sdk, "q7.a");
-            if (!anchorSizedLayout(anchorLayout)) throw new NoSuchMethodException(anchorLayout.getName());
-        } catch (ReflectiveOperationException moved) {
-            anchorLayout = PluginClasses.of(Reflect.type(sdk, "t7.f0")).unique("q7.", NativeCardGlass::anchorSizedLayout);
-        }
+        Class<?> anchorLayout = resolveAnchorLayout(sdk);
         Method measure = anchorLayout.getDeclaredMethod("onMeasure", int.class, int.class);
         hooks.add(module.hook(measure).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
             Object result = chain.proceed();
@@ -244,6 +238,16 @@ final class NativeCardGlass {
             center(anchor, root.getMeasuredHeight() > initial);
             return resized;
         }));
+    }
+
+    private static Class<?> resolveAnchorLayout(ClassLoader sdk) throws ReflectiveOperationException {
+        for (String name : new String[]{"q7.a", "p7.a"}) {
+            try {
+                Class<?> type = Reflect.type(sdk, name);
+                if (anchorSizedLayout(type)) return type;
+            } catch (ClassNotFoundException | LinkageError ignored) { }
+        }
+        return PluginClasses.of(NativeCardMaterial.sdkLightType(sdk)).unique("q7.", NativeCardGlass::anchorSizedLayout);
     }
 
     private static boolean anchorSizedLayout(Class<?> type) {
@@ -297,17 +301,20 @@ final class NativeCardGlass {
         }
     }
 
-    private record SdkChrome(Class<?> chrome, Class<?> provider, Class<?> stroke, String strokeUpdate, String coeUpdate) {
+    private record SdkChrome(Class<?> chrome, Class<?> provider, Class<?> stroke, String strokeUpdate,
+                             String coeClass, String coeUpdate) {
         static SdkChrome resolve(ClassLoader sdk) throws ReflectiveOperationException {
-            try { return resolve(sdk, "g7.i2", "g7.r4", "e7.gk", "i1", "f1"); }
+            try { return resolve(sdk, "f7.m2", "f7.g5", "d7.hk", "i1", "d7.c3", "f1"); }
+            catch (ReflectiveOperationException | LinkageError olderSdk) { }
+            try { return resolve(sdk, "g7.i2", "g7.r4", "e7.gk", "i1", "e7.c3", "f1"); }
             catch (ReflectiveOperationException | LinkageError differentSdk) {
-                try{return resolve(sdk, "g7.f2", "g7.i4", "e7.sj", "h1", "e1");}
+                try{return resolve(sdk, "g7.f2", "g7.i4", "e7.sj", "h1", "e7.c3", "e1");}
                 catch(ReflectiveOperationException|LinkageError changed){return discover(sdk);}
             }
         }
 
         private static SdkChrome discover(ClassLoader sdk)throws ReflectiveOperationException{
-            var index=PluginClasses.of(Reflect.type(sdk,"t7.f0"));
+            var index=PluginClasses.of(NativeCardMaterial.sdkLightType(sdk));
             Class<?> chrome=index.unique("g7.",type->PluginClasses.has(type,void.class,FrameLayout.class,View.class));
             Class<?> provider=index.unique("g7.",type->{
                 if(!android.view.ViewOutlineProvider.class.isAssignableFrom(type))return false;
@@ -318,24 +325,28 @@ final class NativeCardGlass {
                     &&method.getParameterCount()==0
                     &&Drawable.class.isAssignableFrom(method.getReturnType())
                     &&PluginClasses.has(method.getReturnType(),void.class,float.class,float.class,int.class));
-            return new SdkChrome(chrome,provider,stroke.getReturnType(),null,null);
+            return new SdkChrome(chrome,provider,stroke.getReturnType(),null,"e7.c3",null);
         }
 
         private static SdkChrome resolve(ClassLoader sdk, String chrome, String provider, String stroke,
-                                         String strokeUpdate, String coeUpdate) throws ReflectiveOperationException {
+                                         String strokeUpdate, String coeClass, String coeUpdate)
+                throws ReflectiveOperationException {
             Class<?> chromeType = Reflect.type(sdk, chrome);
             Class<?> providerType = Reflect.type(sdk, provider);
             Class<?> strokeType = Reflect.type(sdk, stroke);
             if (!android.view.ViewOutlineProvider.class.isAssignableFrom(providerType)
                     || !Drawable.class.isAssignableFrom(strokeType)) throw new NoSuchMethodException(chrome);
             Reflect.method(chromeType, "g0", void.class, FrameLayout.class, View.class);
-            return new SdkChrome(chromeType, providerType, strokeType, strokeUpdate, coeUpdate);
+            providerType.getDeclaredConstructor(float.class, int.class, Float.class);
+            Reflect.method(strokeType, "e", void.class, float.class, float.class, int.class);
+            return new SdkChrome(chromeType, providerType, strokeType, strokeUpdate, coeClass, coeUpdate);
         }
     }
 
     private void installSdkGlass(ClassLoader sdk) throws ReflectiveOperationException {
-        Class<?> glass = Reflect.type(sdk, "t7.f0");
-        Class<?> shader = Reflect.type(sdk, "t7.g0");
+        Class<?> glass = NativeCardMaterial.sdkLightType(sdk);
+        String shaderPackage = glass.getPackageName();
+        Class<?> shader = Reflect.type(sdk, shaderPackage + ".g0");
         var engine = Reflect.method(glass, "b", shader);
         var mode = Reflect.field(shader, "c", int.class);
         var uniforms = Reflect.field(shader, "e", float[].class);
@@ -356,7 +367,7 @@ final class NativeCardGlass {
                         Reflect.call(setWeight, nativeShader, shape.weight());
                     }
                 });
-        module.deoptimize(Reflect.method(Reflect.type(sdk, "t7.e0"), "c0", void.class));
+        module.deoptimize(Reflect.method(Reflect.type(sdk, shaderPackage + ".e0"), "c0", void.class));
     }
 
     private void installSdkStroke(SdkChrome chrome) throws ReflectiveOperationException {
@@ -446,7 +457,7 @@ final class NativeCardGlass {
     }
 
     private void installCoe(ClassLoader sdk, SdkChrome chrome) throws ReflectiveOperationException {
-        Class<?> coe = Reflect.type(sdk, "e7.c3");
+        Class<?> coe = Reflect.type(sdk, chrome.coeClass());
         var host = Reflect.field(coe, "B", View.class);
         Method configure = Reflect.method(coe, "J0", void.class, float.class, float.class, float.class);
         if(chrome.coeUpdate()!=null)module.deoptimize(Reflect.method(chrome.chrome(),chrome.coeUpdate(),void.class));

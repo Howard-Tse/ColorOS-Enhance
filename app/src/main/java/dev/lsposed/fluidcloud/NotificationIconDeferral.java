@@ -100,7 +100,7 @@ final class NotificationIconDeferral {
             if (!masked.contains(key)) reconcile();
             return;
         }
-        if (attempted.contains(key) || replaced.test(key)
+        if (!feature.rules().hideOriginal() || attempted.contains(key) || replaced.test(key)
                 || feature.rules().original() == NotificationCloudRules.Original.COLLECT
                         && !feature.collectionSupported()
                 || !feature.mayReplaceBanner(entry, notification)) return;
@@ -150,7 +150,7 @@ final class NotificationIconDeferral {
         Set<String> next = new HashSet<>(), live = new HashSet<>();
         Set<String> heldGroups = new HashSet<>(), ordinaryGroups = new HashSet<>();
         boolean enabled = feature.enabled() && (feature.unlocked() || feature.rules().retainOnLock())
-                && feature.rules().replaceHeadsUp();
+                && feature.rules().hideOriginal();
         for (StatusBarNotification notification : notifications) {
             String key = notification.getKey();
             live.add(key);
@@ -162,7 +162,7 @@ final class NotificationIconDeferral {
             boolean confirmed = enabled && replaced.test(key);
             if (confirmed) restoring.remove(key);
             boolean hidden = confirmed || enabled && pending.containsKey(key)
-                    || feature.enabled() && feature.rules().replaceHeadsUp() && restoring.contains(key);
+                    || feature.enabled() && feature.rules().hideOriginal() && restoring.contains(key);
             if (hidden) next.add(key);
             if (notification.isGroup() && !isSummary(notification)) {
                 (hidden ? heldGroups : ordinaryGroups).add(notification.getGroupKey());

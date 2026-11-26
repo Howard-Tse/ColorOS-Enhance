@@ -1,16 +1,19 @@
 package dev.lsposed.fluidcloud;
 
 import android.app.Notification;
+import android.os.UserHandle;
 import android.service.notification.StatusBarNotification;
 import io.github.libxposed.api.XposedInterface;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Map;
 import java.util.function.Consumer;
 
 /** The same per-entry visibility and redaction decisions used by the native lockscreen. */
 final class NotificationLockscreenPolicy {
     private final Method locked, hidden, redaction, currentUser, userId;
     private final Field manager;
+    private final NotificationCloneProfiles cloneProfiles;
     private Object provider;
     private final NotificationCloudFeature feature;
     private NotificationCardLifetime cardLifetime;
@@ -23,7 +26,13 @@ final class NotificationLockscreenPolicy {
         Class<?> users = Reflect.type(loader, "com.android.systemui.statusbar.NotificationLockscreenUserManagerImpl");
         manager = Reflect.field(type, "lockscreenUserManager", Object.class);
         currentUser = Reflect.method(users, "getCurrentUserId", int.class);
-        userId = Reflect.method(android.os.UserHandle.class, "getIdentifier", int.class);
+        userId = Reflect.method(UserHandle.class, "getIdentifier", int.class);
+        NotificationCloneProfiles profiles = null;
+        try { profiles = new NotificationCloneProfiles(users, currentUser, userId); }
+        catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+            feature.failure("Notification clone profile lookup unavailable", unavailable);
+        }
+        cloneProfiles = profiles;
         locked = Reflect.method(type, "isLockedOrLocking", boolean.class);
         hidden = Reflect.method(type, "shouldHideNotification", boolean.class, entry);
         Method redact;
@@ -67,13 +76,26 @@ final class NotificationLockscreenPolicy {
         if (provider == null || source.getNotification().visibility == Notification.VISIBILITY_SECRET) return false;
         try {
             Object users = Reflect.get(manager, provider);
-            if (users == null || !Reflect.call(userId, source.getUser()).equals(Reflect.call(currentUser, users))
-                    || !Boolean.TRUE.equals(Reflect.call(locked, provider))
+            if (users == null || !Boolean.TRUE.equals(Reflect.call(locked, provider))) return false;
+            boolean current = Reflect.call(userId, source.getUser()).equals(Reflect.call(currentUser, users));
+            if ((!current && (cloneProfiles == null || !cloneProfiles.contains(users, source.getUser())))
                     || hidden(entry, showCard)) return false;
             Object privacy = Reflect.call(redaction, users, entry);
             return Boolean.FALSE.equals(privacy) || Integer.valueOf(0).equals(privacy);
         } catch (RuntimeException | LinkageError unavailable) {
             return false;
         }
+    }
+
+    int cloneSerial(UserHandle user) {
+        if (provider == null || cloneProfiles == null) return -1;
+        try { return cloneProfiles.serial(Reflect.get(manager, provider), user); }
+        catch (RuntimeException | LinkageError unavailable) { return -1; }
+    }
+
+    Map<UserHandle, Integer> cloneUsers() {
+        if (provider == null || cloneProfiles == null) return Map.of();
+        try { return cloneProfiles.snapshot(Reflect.get(manager, provider)); }
+        catch (RuntimeException | LinkageError unavailable) { return Map.of(); }
     }
 }

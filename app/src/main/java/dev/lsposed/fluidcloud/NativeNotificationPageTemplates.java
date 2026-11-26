@@ -44,8 +44,10 @@ final class NativeNotificationPageTemplates {
         configure = Reflect.method(type, "p", void.class, Bundle.class);
         capture = feature.module.hook(create).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain -> {
             Object result = chain.proceed();
-            if (result != null && feature.enabled()
-                    && "NOTIFICATION_CARD".equals(((Enum<?>) chain.getArg(0)).name()))
+            if (result != null && feature.enabled() && switch (((Enum<?>) chain.getArg(0)).name()) {
+                case "NOTIFICATION_CARD", "NORMAL_CARD", "NOTIFICATION_MINI_CARD" -> true;
+                default -> false;
+            })
                 recipes.put(result, new Recipe(chain.getThisObject(), chain.getArg(0), new Bundle((Bundle) chain.getArg(2))));
             return result;
         });

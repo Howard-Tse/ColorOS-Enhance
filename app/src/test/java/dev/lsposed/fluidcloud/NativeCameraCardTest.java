@@ -878,6 +878,66 @@ public class NativeCameraCardTest {
         assertEquals(Color.RED, image.getPixel(2, centerY));
         contract.restore();
     }
+    @Test @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    public void firstGroupedCardKeepsItsCameraGapAndPaintsOneContourAcrossThePager() throws Exception {
+        var context = Robolectric.buildActivity(Activity.class).setup().get();
+        var root = new Root(context);
+        root.h.set(460, 25, 540, 115);
+        var list = new Container(context);
+        root.addView(list);
+        var first = templateCard(context);
+        list.addView(first);
+        var original = (FrameLayout) first.i;
+        var expanded = new NotificationPagerMount.Expanded(first, original);
+        var cards = contract(false);
+        list.setTranslationY(200);
+        cards.afterNativeLayout(list, true);
+        first.measure(View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY), View.MeasureSpec.UNSPECIFIED);
+        first.layout(0, 14, 1000, 14 + first.getMeasuredHeight());
+        var pages = new FrameLayout(context);
+        var pageMaterial = new PageBackground(context);
+        var controls = new FrameLayout(context);
+        var stroke = new GradientDrawable();
+        controls.setForeground(stroke);
+        pages.addView(pageMaterial, new FrameLayout.LayoutParams(-1, -1));
+        pages.addView(controls, new FrameLayout.LayoutParams(-1, -2));
+        cards.registerSharedStroke(controls);
+        var mount = new NotificationPagerMount(first, original, pages, new java.util.ArrayList<>());
+        expanded.mount(pages);
+
+        first.setScaleX(.75f);
+        first.setScaleY(.75f);
+        var provider = new OutlineProvider(new Rect(55, 80, 945, 460));
+        first.setOutlineProvider(provider);
+        cards.beforeDraw(first, true);
+        float inset = cards.cameraContentInset(first);
+        assertEquals(inset, (original.getY() - provider.a.top) * .75f, .001f);
+        float aligned = original.getY();
+        mount.present(350);
+        cards.beforeDraw(first, true);
+        assertEquals(aligned, pages.getY(), .001f);
+        assertEquals(0f, pageMaterial.getAlpha(), 0f);
+        assertEquals(0, stroke.getAlpha());
+        assertEquals(1f, controls.getAlpha(), 0f);
+        assertTrue(java.util.stream.IntStream.range(0, first.getChildCount())
+                .anyMatch(i -> first.getChildAt(i) instanceof CameraMaterialSurface));
+
+        first.setScaleX(1f);
+        first.setScaleY(1f);
+        first.setOutlineProvider(new OutlineProvider(null));
+        cards.beforeDraw(first, true);
+        assertEquals(0f, original.getTranslationY(), 0f);
+        assertEquals(original.getY(), pages.getY(), 0f);
+        list.adapterOverride = 1;
+        cards.beforeMeasure(first, true);
+        cards.afterLayout(first, true);
+        assertEquals(1f, pageMaterial.getAlpha(), 0f);
+        assertEquals(255, stroke.getAlpha());
+        expanded.close();
+        mount.remove();
+        cards.restore();
+    }
+
     @Test public void liveMorphSharesBlurOutlineBoundsAndStopsWhenDisabledOrMovedToAnotherSlot() throws Exception {
         var context=Robolectric.buildActivity(Activity.class).setup().get();var root=new Root(context);
         root.h.set(460,25,540,115);var list=new Container(context);root.addView(list);

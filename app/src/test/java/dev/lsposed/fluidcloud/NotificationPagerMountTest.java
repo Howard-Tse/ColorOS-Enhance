@@ -66,4 +66,18 @@ public class NotificationPagerMountTest {
         assertEquals(0, NotificationPagerMount.between(120, 0, .5f));
         assertEquals(0, NotificationPagerMount.between(0, 280, .5f));
     }
+
+    @Test public void reversingPastTheStartCannotClearInTheOppositeDirection() {
+        assertEquals(160f, NativeNotificationCardTouch.outwardDistance(160f, 1), 0f);
+        assertEquals(-160f, NativeNotificationCardTouch.outwardDistance(-160f, -1), 0f);
+        float reversed = NativeNotificationCardTouch.outwardDistance(-250f, 1);
+        assertFalse(NativeNotificationCardTouch.shouldDismiss(reversed, -2500f, 400, 10, 50));
+    }
+
+    @Test public void aShortSwipeNeedsAnOutwardFlingAndLongDragsCanClearWithoutOne() {
+        assertFalse(NativeNotificationCardTouch.shouldDismiss(24f, 2500f, 400, 10, 50));
+        assertFalse(NativeNotificationCardTouch.shouldDismiss(-64f, 500f, 400, 10, 50));
+        assertTrue(NativeNotificationCardTouch.shouldDismiss(-64f, -500f, 400, 10, 50));
+        assertTrue(NativeNotificationCardTouch.shouldDismiss(140f, 0f, 400, 10, 50));
+    }
 }

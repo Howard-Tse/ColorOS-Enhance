@@ -8,6 +8,7 @@ import android.net.Uri;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.os.UserHandle;
 import dev.howard.colorosenhance.BuildConfig;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -22,9 +23,10 @@ public final class NotificationMetadataProvider extends ContentProvider {
     public static final int LEGACY_COLLECTION_ID = 0x43454e43;
     private record Cached(Bundle channels, long time) { }
     private record Request(String token, long time) { }
-    private final Map<String, Cached> cache = new LinkedHashMap<>();
-    private final Map<String, Request> pending = new LinkedHashMap<>();
-    private android.os.IBinder alertRenderer;
+    private record Instance(String pkg, int serial) { }
+    private final Map<Instance, Cached> cache = new LinkedHashMap<>();
+    private final Map<Instance, Request> pending = new LinkedHashMap<>();
+    private Bundle alertRenderer = Bundle.EMPTY;
     @Override public boolean onCreate() { return true; }
     private boolean platformUid(int uid, String pkg) {
         try { return getContext().getPackageManager().getApplicationInfo(pkg, 0).uid == uid
@@ -35,14 +37,18 @@ public final class NotificationMetadataProvider extends ContentProvider {
         int uid = Binder.getCallingUid();
         if ("read_alert_renderer".equals(method)) {
             if (uid != android.os.Process.SYSTEM_UID) throw new SecurityException("Alert status caller denied");
-            Bundle result = new Bundle();
-            result.putBinder("renderer", alertRenderer);
-            return result;
+            return new Bundle(alertRenderer);
         }
         boolean writer = platformUid(uid, "com.android.systemui");
         if ("publish_alert_renderer".equals(method)) {
             if (!writer) throw new SecurityException("Alert status writer denied");
-            alertRenderer = extras == null ? null : extras.getBinder("renderer");
+            Bundle state = new Bundle();
+            if (extras != null && extras.getBinder("renderer") != null) {
+                state.putBinder("renderer", extras.getBinder("renderer"));
+                state.putParcelableArrayList("clone_users", extras.getParcelableArrayList("clone_users", UserHandle.class));
+                state.putIntArray("clone_serials", extras.getIntArray("clone_serials"));
+            }
+            alertRenderer = state;
             long identity = Binder.clearCallingIdentity();
             try { getContext().getContentResolver().notifyChange(ALERT_STATUS, null); }
             finally { Binder.restoreCallingIdentity(identity); }
@@ -60,27 +66,40 @@ public final class NotificationMetadataProvider extends ContentProvider {
         if (!(method.equals("publish") ? writer : reader)) throw new SecurityException("Channel metadata caller denied");
         String pkg = extras == null ? null : extras.getString("package");
         if (!NotificationCloudRules.validPackage(pkg)) return new Bundle();
+        int serial = extras.getInt("serial", NotificationCloudRules.MAIN_APP);
+        if (serial < NotificationCloudRules.MAIN_APP) return new Bundle();
+        Instance instance = new Instance(pkg, serial);
         long now = SystemClock.elapsedRealtime();
         pending.entrySet().removeIf(entry -> now - entry.getValue().time() > 15000);
         cache.entrySet().removeIf(entry -> now - entry.getValue().time() > 300000);
         if (method.equals("publish")) {
-            Request request = pending.get(pkg);
+            Request request = pending.get(instance);
             if (request != null && request.token().equals(extras.getString("token"))) {
                 String[] ids = extras.getStringArray("ids"), labels = extras.getStringArray("labels");
                 if (ids != null && labels != null && ids.length == labels.length && ids.length <= 512) {
                     Bundle value = new Bundle(); value.putStringArray("ids", ids); value.putStringArray("labels", labels);
                     value.putString("source", extras.getString("source", "当前通知")); value.putBoolean("ready", true);
-                    cache.put(pkg, new Cached(value, now)); pending.remove(pkg);
+                    if (serial == NotificationCloudRules.MAIN_APP) {
+                        int[] cloneSerials = extras.getIntArray("clone_serials");
+                        String[] cloneLabels = extras.getStringArray("clone_labels");
+                        if (cloneSerials != null && cloneLabels != null && cloneSerials.length == cloneLabels.length
+                                && cloneSerials.length <= 20) {
+                            value.putIntArray("clone_serials", cloneSerials);
+                            value.putStringArray("clone_labels", cloneLabels);
+                        }
+                    }
+                    cache.put(instance, new Cached(value, now)); pending.remove(instance);
                 }
             }
-        } else if (method.equals("request") && !pending.containsKey(pkg)) {
-            cache.remove(pkg);
-            String token = java.util.UUID.randomUUID().toString(); pending.put(pkg, new Request(token, now));
+        } else if (method.equals("request") && !pending.containsKey(instance)) {
+            cache.remove(instance);
+            String token = java.util.UUID.randomUUID().toString(); pending.put(instance, new Request(token, now));
             long identity = Binder.clearCallingIdentity();
-            try { getContext().sendBroadcast(new Intent(ACTION).setPackage("com.android.systemui").putExtra("package", pkg).putExtra("token", token)); }
+            try { getContext().sendBroadcast(new Intent(ACTION).setPackage("com.android.systemui")
+                    .putExtra("package", pkg).putExtra("serial", serial).putExtra("token", token)); }
             finally { Binder.restoreCallingIdentity(identity); }
         }
-        Cached result = cache.get(pkg); return result == null ? new Bundle() : new Bundle(result.channels());
+        Cached result = cache.get(instance); return result == null ? new Bundle() : new Bundle(result.channels());
     }
     static void clearLegacyCollection(android.content.Context context) {
         context.getSystemService(android.app.NotificationManager.class).cancel(LEGACY_COLLECTION_TAG, LEGACY_COLLECTION_ID);
