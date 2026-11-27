@@ -1,6 +1,7 @@
 package dev.howard.colorosenhance;
 
 import dev.lsposed.fluidcloud.MediaWaveBands;
+import dev.lsposed.fluidcloud.MediaWaveOptions;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.Set;
@@ -9,7 +10,8 @@ import java.util.function.Supplier;
 /** Application-owned configuration boundary shared by both frontends. */
 public final class SettingsCoordinator {
     private static final Set<String> WAVE_PARAMETERS = Set.of(MediaWaveBands.KEY, "wave_interval_ms",
-            "wave_sensitivity", "wave_attack_ms", "wave_release_ms", "wave_hold_paused");
+            "wave_sensitivity", "wave_attack_ms", "wave_release_ms", "wave_hold_paused",
+            MediaWaveOptions.MIX_COMPATIBILITY_KEY);
     public interface Source { Object identity(); PreferenceSession.Store open(String group); }
     public record State(long revision, Map<String,Object> values, boolean writable) {}
     public record Result(String status, State state) {}

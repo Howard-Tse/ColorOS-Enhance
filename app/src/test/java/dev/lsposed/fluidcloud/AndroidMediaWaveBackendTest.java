@@ -18,11 +18,11 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=36,application=Application.class,shadows=AndroidMediaWaveBackendTest.Engine.class)
 public class AndroidMediaWaveBackendTest {
-    @Test public void inheritedEnabledEngineIsStoppedBeforeConfiguringItsCaptureSize()throws Exception{
+    @Test public void inheritedEnabledEngineIsReleasedWithoutChangingItsState()throws Exception{
         var visualizer=new Visualizer(12);Engine engine=Shadow.extract(visualizer);engine.enabled=true;
-        var source=AndroidMediaWaveBackend.configure(visualizer,()->MediaWaveOptions.DEFAULTS);
-        assertEquals(List.of("disable","size","scaling","enable"),engine.events);
-        assertTrue(engine.enabled);source.close();assertFalse(engine.enabled);assertTrue(engine.released);
+        assertThrows(MediaWaveCapture.NotReady.class,
+                ()->AndroidMediaWaveBackend.configure(visualizer,()->MediaWaveOptions.DEFAULTS));
+        assertTrue(engine.events.isEmpty());assertTrue(engine.enabled);assertTrue(engine.released);
     }
     @Test public void actualSamplingRateCanSettleAfterActivationWithoutDiscardingTheSource()throws Exception{
         var visualizer=new Visualizer(12);Engine engine=Shadow.extract(visualizer);
@@ -46,7 +46,7 @@ public class AndroidMediaWaveBackendTest {
             settings.set(MediaWaveOptions.DEFAULTS);
             assertEquals(original, source.read());
             assertEquals(3, engine.reads);
-            assertEquals(List.of("disable", "size", "scaling", "enable"), engine.events);
+            assertEquals(List.of("size", "scaling", "enable"), engine.events);
             assertTrue(engine.enabled);
             assertFalse(engine.released);
         }

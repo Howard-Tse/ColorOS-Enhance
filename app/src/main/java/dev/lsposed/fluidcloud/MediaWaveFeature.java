@@ -296,17 +296,23 @@ final class MediaWaveFeature {
     }
     private MediaWaveCapture.Request playback(){
         AudioPlaybackConfiguration found=null;
+        boolean allowOutputMix=options.mixCompatibility();
         for(var config:playbacks){
-            if((int)Reflect.call(clientUid,config)!=uid || (int)Reflect.call(playerState,config)!=2)continue;
+            if((int)Reflect.call(playerState,config)!=2)continue;
+            int client=(int)Reflect.call(clientUid,config);
+            if(client!=uid && !allowOutputMix)continue;
             AudioAttributes attributes=config.getAudioAttributes();
-            if(attributes.getUsage()!=AudioAttributes.USAGE_MEDIA || attributes.getAllowedCapturePolicy()==AudioAttributes.ALLOW_CAPTURE_BY_NONE)return null;
+            boolean capturable=attributes.getAllowedCapturePolicy()!=AudioAttributes.ALLOW_CAPTURE_BY_NONE;
+            if(!capturable)allowOutputMix=false;
+            if(client!=uid)continue;
+            if(attributes.getUsage()!=AudioAttributes.USAGE_MEDIA || !capturable)return null;
             if(found!=null)return null;found=config; // ambiguous/cross-faded streams retain OEM
         }
         if(found==null)return null;
         int id=(int)Reflect.call(sessionId,found);if(id<=0)return null;
         int route=31*(31*routeEpoch+continuity.epoch())+Arrays.hashCode((int[])Reflect.get(devices,found));
         int player=playerInterface==null?0:(int)Reflect.call(playerInterface,found);
-        return new MediaWaveCapture.Request(uid,id,route,player);
+        return new MediaWaveCapture.Request(uid,id,route,player,allowOutputMix);
     }
     private void ensureRun()throws ReflectiveOperationException{
         if(run==null)run=new Run(new AndroidMediaWaveBackend(()->module.config.extras().waveOptions(),message->{

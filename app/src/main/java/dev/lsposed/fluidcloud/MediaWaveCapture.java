@@ -4,8 +4,9 @@ import java.util.function.BiConsumer;
 
 /** One serialized worker and effect, bounded user capture interval; no UI-thread audio calls. */
 final class MediaWaveCapture {
-    record Request(int uid,int session,int route,int player) {
+    record Request(int uid,int session,int route,int player,boolean allowOutputMix) {
         Request(int uid,int session,int route){this(uid,session,route,0);}
+        Request(int uid,int session,int route,int player){this(uid,session,route,player,false);}
         Request { if(uid<0 || session<=0)throw new IllegalArgumentException("A private playback session is required"); }
     }
     interface Scheduler {
@@ -18,7 +19,10 @@ final class MediaWaveCapture {
         default boolean buffering(){return false;}
         @Override void close();
     }
-    enum Route { SAFE, WAIT, UNSAFE }
+    enum Route {
+        SAFE, SAFE_OUTPUT_MIX, WAIT, UNSAFE, EFFECT_CONFLICT;
+        boolean canOpen() { return this == SAFE || this == SAFE_OUTPUT_MIX; }
+    }
     interface Backend {
         boolean safe(Request request) throws Exception;
         default Route route(Request request)throws Exception{return safe(request)?Route.SAFE:Route.WAIT;}
@@ -70,13 +74,17 @@ final class MediaWaveCapture {
         try{
             Route route=backend.route(next);
             if(ticket!=generation)return;
+            if(route==Route.EFFECT_CONFLICT || route==Route.SAFE_OUTPUT_MIX && !next.allowOutputMix()){
+                notifyFallback(ticket,"audio effect compatibility");
+                return;
+            }
             if(route==Route.UNSAFE){
                 // Restore OEM immediately, but a startup route can later settle on
                 // PCM without changing its player key. Only read-only checks may
                 // continue within the same finite budget; never open while unsafe.
                 stop();notifyFallback(ticket,"unsafe audio route");retry(ticket,next,"unsafe audio route");return;
             }
-            if(route!=Route.SAFE){retry(ticket,next,"audio route not ready");return;}
+            if(!route.canOpen()){retry(ticket,next,"audio route not ready");return;}
             if(ticket!=generation)return;
             source=backend.open(next);sourceTicket=ticket;
             if(source==null)throw new IllegalStateException("No visualizer");

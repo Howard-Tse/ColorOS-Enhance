@@ -172,9 +172,9 @@ final class NativeNotificationCapsule {
         return Math.round(Math.max(48, max) * view.getResources().getDisplayMetrics().density);
     }
 
-    String caption(StatusBarNotification sbn, Context host, NotificationCloudRules rules, int maxDp) {
+    String caption(StatusBarNotification sbn, Context host, NotificationCloudRules rules, int maxDp, boolean marquee) {
         String text = captionText(sbn, host, rules);
-        return maxDp > 0 ? limit(text, maxDp) : text;
+        return maxDp > 0 && !marquee ? limit(text, maxDp) : text;
     }
 
     static String captionText(StatusBarNotification sbn, Context host, NotificationCloudRules rules) {

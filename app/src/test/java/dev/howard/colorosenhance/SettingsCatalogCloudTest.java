@@ -24,7 +24,7 @@ public class SettingsCatalogCloudTest {
     @Test public void newChoicesAreSharedOptInControlsIndependentOfUnbindAndNumericWritesAreBounded(){
         var values=Map.<String,Object>of("enabled",true);
         for(String key:List.of("realtime_media_wave","hide_capsule_stroke","hide_capsule_arrows","capsule_keep_in_foreground","skip_empty_capsule","card_dim_enabled",
-                "capsule_corners_enabled","card_corners_enabled","capsule_size_enabled","selected_card_first","capsule_lock_exit")){
+                "capsule_corners_enabled","card_corners_enabled","capsule_size_enabled","capsule_marquee_enabled","selected_card_first","capsule_lock_exit")){
             assertFalse(item(key).defaultFlag());assertTrue(SettingsCatalog.controlEnabled("cloud",key,values));
             assertFalse(SettingsCatalog.controlEnabled("cloud",key,Map.of()));assertTrue(SettingsCoordinator.validValue("cloud",key,true));
         }
@@ -33,10 +33,25 @@ public class SettingsCatalogCloudTest {
         assertTrue(SettingsCoordinator.validValue("cloud","card_dim_percent",0));assertTrue(SettingsCoordinator.validValue("cloud","card_dim_percent",100));
         assertFalse(SettingsCoordinator.validValue("cloud","card_dim_percent",101));assertFalse(SettingsCoordinator.validValue("cloud","card_dim_percent","40"));
     }
+    @Test public void capsuleMarqueeUsesTheSharedCapsulePageAndOnlyShowsParametersWhenEnabled() {
+        var group = "cloud";
+        var enabled = Map.<String, Object>of("enabled", true, "capsule_marquee_enabled", true);
+        for (String key : List.of("capsule_marquee_speed", "capsule_marquee_pause", "capsule_marquee_repeats")) {
+            var parameter = item(key);
+            assertTrue(SettingsLayout.items(null, "cloud_capsule").contains(parameter));
+            assertTrue(parameter.valueOnly());
+            assertFalse(parameter.visible(Map.of()));
+            assertTrue(parameter.visible(enabled));
+            assertTrue(SettingsCatalog.controlEnabled(group, key, enabled));
+            assertTrue(SettingsCoordinator.validValue(group, key, parameter.valueDefault()));
+            assertFalse(SettingsCoordinator.validValue(group, key, parameter.max() + 1));
+        }
+    }
     @Test public void cloudCatalogContainsThreeScenePairsWithOemDefaults() {
         SettingsCatalog.Group cloud = SettingsCatalog.find("cloud");
         assertNotNull(cloud);
-        assertEquals(List.of("notification_cloud_enabled", "notification_popup_seconds", "notification_capsule_max_dp", "keep_paused_music", "media_card_in_shade", "realtime_media_wave", "wave_interval_ms", "wave_sensitivity", "wave_attack_ms", "wave_release_ms", "wave_hold_paused", "capsule_size_enabled", "capsule_height_percent", "hide_capsule_stroke", "hide_capsule_arrows",
+        assertEquals(List.of("notification_cloud_enabled", "notification_popup_seconds", "notification_capsule_max_dp", "keep_paused_music", "media_card_in_shade", "realtime_media_wave", "wave_mix_compatibility", "wave_interval_ms", "wave_sensitivity", "wave_attack_ms", "wave_release_ms", "wave_hold_paused", "capsule_size_enabled", "capsule_height_percent",
+                "capsule_marquee_enabled", "capsule_marquee_speed", "capsule_marquee_pause", "capsule_marquee_repeats", "hide_capsule_stroke", "hide_capsule_arrows",
                 "capsule_corners_enabled", "capsule_continuous_corners", "capsule_keep_in_foreground",
                 "capsule_offset_x_dp", "capsule_offset_y_dp", "capsule_landscape_offset_x_dp", "capsule_landscape_offset_y_dp",
                 "skip_empty_capsule", "block_capsule_click_top", "selected_card_first", "camera_card_expansion", "card_dim_enabled",
@@ -179,6 +194,9 @@ public class SettingsCatalogCloudTest {
         assertEquals(10, item("wave_release_ms").min());assertEquals(2000, item("wave_release_ms").max());
         assertFalse(item("wave_hold_paused").defaultFlag());assertTrue(item("wave_hold_paused").visible(on));
         assertTrue(SettingsCoordinator.validValue("cloud","wave_hold_paused",true));
+        var compatibility=item("wave_mix_compatibility");
+        assertFalse(compatibility.defaultFlag());assertFalse(compatibility.visible(Map.of()));
+        assertTrue(compatibility.visible(on));assertTrue(SettingsCoordinator.validValue("cloud",compatibility.key(),true));
     }
     @Test public void collapseRowOnlyAppearsAndCanBeEditedWithShadeKeep(){
         var item=item("shade_collapse_on_open");assertFalse(item.defaultFlag());

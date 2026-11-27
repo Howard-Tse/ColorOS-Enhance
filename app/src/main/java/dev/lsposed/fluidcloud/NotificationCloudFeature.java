@@ -55,6 +55,7 @@ final class NotificationCloudFeature {
     private NotificationCollectionPage collectionPage;
     private final NotificationOpenCleanup openCleanup;
     private int capsuleMaxDp;
+    private boolean capsuleMarquee;
     private final android.os.Binder alertRenderer = new android.os.Binder();
     private final java.util.concurrent.ExecutorService alertStatusWorker = java.util.concurrent.Executors.newSingleThreadExecutor(
             task -> new Thread(task, "coloros-notification-alert-status"));
@@ -87,9 +88,12 @@ final class NotificationCloudFeature {
             if (historyEnabled() && (name.equals("onEntryAdded") || name.equals("onEntryUpdated")))
                 observeHistory(args[0]);
             if (name.equals("onEntryRemoved")) {
-                String key = notification(args[0]).getKey();
-                if (historyEnabled() && args.length > 1 && args[1] instanceof Integer reason)
-                    history.removed(key, reason, android.os.SystemClock.elapsedRealtime());
+                StatusBarNotification item = notification(args[0]);
+                String key = item.getKey();
+                if (rules.history() && args.length > 1 && args[1] instanceof Integer reason) {
+                    long now = android.os.SystemClock.elapsedRealtime();
+                    history.removed(item, reason, now, openCleanup.consumeOpen(item, now), historyEnabled());
+                }
                 newNotificationKeys.remove(key);
                 if (capsuleResume != null) capsuleResume.removed(key);
                 if (presentation != null) presentation.removed(key);
@@ -288,8 +292,9 @@ final class NotificationCloudFeature {
         NotificationCloudRules next = NotificationCloudRules.from(values);
         boolean enabled = Boolean.TRUE.equals(values.get("enabled")) && Boolean.TRUE.equals(values.get(NotificationCloudRules.ENABLED));
         int max = values.get("notification_capsule_max_dp") instanceof Number n ? Math.max(0, Math.min(240, n.intValue())) : 0;
+        boolean marquee = enabled && Boolean.TRUE.equals(values.get(CapsuleMarqueeOptions.ENABLED));
         main.post(() -> {
-            if (configured == enabled && capsuleMaxDp == max && rules.equals(next)) return;
+            if (configured == enabled && capsuleMaxDp == max && capsuleMarquee == marquee && rules.equals(next)) return;
             if (!enabled || !rules.equals(next)) {
                 if (capsuleResume != null) capsuleResume.reset();
                 if (presentation != null) presentation.finishUnlock();
@@ -303,7 +308,7 @@ final class NotificationCloudFeature {
                 historySeedPending = true;
                 if (actions != null) actions.closeHistory();
             }
-            rules = next; configured = enabled; capsuleMaxDp = max;
+            rules = next; configured = enabled; capsuleMaxDp = max; capsuleMarquee = marquee;
             changed();
         });
     }
@@ -333,6 +338,7 @@ final class NotificationCloudFeature {
         }
     }
     int capsuleMaxDp() { return capsuleMaxDp; }
+    boolean capsuleMarquee() { return capsuleMarquee; }
     int capsuleWidthLimit(View view) { return nativeCloud == null ? Integer.MAX_VALUE : nativeCloud.capsuleWidthLimit(view); }
     private void refresh() {
         KeyguardManager keyguard = context == null ? null : context.getSystemService(KeyguardManager.class);

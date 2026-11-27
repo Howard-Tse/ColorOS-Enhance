@@ -1,6 +1,7 @@
 package dev.howard.colorosenhance;
 
 import dev.howard.colorosenhance.notifications.NotificationCloudRules;
+import dev.lsposed.fluidcloud.CapsuleMarqueeOptions;
 import dev.lsposed.fluidcloud.CapsulePosition;
 import dev.lsposed.fluidcloud.CloudCorners;
 import dev.lsposed.fluidcloud.CardSpacing;
@@ -90,8 +91,11 @@ public final class SettingsCatalog {
         items.add(flag("媒体","media_card_in_shade","在通知中心显示媒体卡片",
                 "媒体流体云存在时，也在通知中心显示系统媒体卡片。锁屏按系统处理。"));
         items.add(flag("媒体","realtime_media_wave","媒体实时律动",
-                "播放且胶囊可见时持续采样并计算六频段，可能增加耗电。遇到硬件卸载或无法安全采集时使用原厂动画。更新后需重启系统界面。"));
+                "播放且胶囊可见时持续采样并计算六频段，可能增加耗电。遇到音效冲突、硬件卸载或无法安全采集时使用原厂动画。更新后需重启系统界面。"));
         MediaWaveOptions defaults = MediaWaveOptions.DEFAULTS;
+        items.add(new Item("媒体实时律动参数",MediaWaveOptions.MIX_COMPATIBILITY_KEY,"音效兼容采样",
+                "遇到音效冲突时尝试采集系统输出混音。柱高可能受其他应用声音影响，也可能影响硬件卸载并增加耗电。",false,
+                null,0,0,0,1,1,"",new Visibility("realtime_media_wave",true),null));
         items.add(waveNumber("wave_interval_ms","读取间隔","间隔越短，采样与频谱计算越频繁，可能更耗电。默认 80 ms。",
                 defaults.intervalMs(), MediaWaveOptions.INTERVAL_MIN_MS, MediaWaveOptions.INTERVAL_MAX_MS, MediaWaveOptions.INTERVAL_STEP_MS, "ms"));
         items.add(waveNumber("wave_sensitivity","灵敏度","调整六个频段的整体柱高。",
@@ -109,6 +113,16 @@ public final class SettingsCatalog {
         items.add(new Item("小胶囊外观","capsule_height_percent","纵向高度",
                 "按原厂高度的比例调整，100% 保持原厂。",false,"capsule_height_percent",100,50,200,1,1,"%",
                 new Visibility("capsule_size_enabled",true),null));
+        String marqueeSection = "小胶囊文字滚动";
+        var marquee = CapsuleMarqueeOptions.DEFAULTS;
+        items.add(flag(marqueeSection, CapsuleMarqueeOptions.ENABLED, "超长文字滚动",
+                "滚动显示放不下的胶囊文字。支持通知转流体云和使用系统文字控件的胶囊。"));
+        items.add(marqueeNumber(marqueeSection, CapsuleMarqueeOptions.SPEED, "滚动速度",
+                "每秒移动的距离。", marquee.speed(), CapsuleMarqueeOptions.MIN_SPEED, CapsuleMarqueeOptions.MAX_SPEED, "dp/s"));
+        items.add(marqueeNumber(marqueeSection, CapsuleMarqueeOptions.PAUSE, "首尾停留时间",
+                "每次滚动在开头和末尾各停留的时间。", marquee.pause(), 0, CapsuleMarqueeOptions.MAX_PAUSE, "ms"));
+        items.add(marqueeNumber(marqueeSection, CapsuleMarqueeOptions.REPEATS, "滚动次数",
+                "达到次数后回到开头。0 为持续循环。", marquee.repeats(), 0, CapsuleMarqueeOptions.MAX_REPEATS, "次"));
         items.add(flag("小胶囊外观","hide_capsule_stroke","隐藏小胶囊边框",
                 "隐藏深色背景下的原生边框；关闭后按当前背景恢复系统处理。"));
         items.add(flag("小胶囊外观","hide_capsule_arrows","隐藏左右切换提示",
@@ -163,6 +177,11 @@ public final class SettingsCatalog {
         return new Item("媒体实时律动参数",key,title,description,false,key,fallback,min,max,step,1,unit,
                 new Visibility("realtime_media_wave",true),null);
     }
+    private static Item marqueeNumber(String section, String key, String title, String description, int fallback,
+                                      int min, int max, String unit) {
+        return new Item(section, key, title, description, false, key, fallback, min, max, 1, 1, unit,
+                new Visibility(CapsuleMarqueeOptions.ENABLED, true), null);
+    }
     private static void addCapsulePosition(List<Item> items, String orientation, String prefix) {
         String horizontal = prefix + "offset_x_dp", vertical = prefix + "offset_y_dp";
         items.add(value("小胶囊位置", horizontal, orientation + "横向位置",
@@ -195,6 +214,8 @@ public final class SettingsCatalog {
         if ("notification_popup_seconds".equals(key) || "notification_capsule_max_dp".equals(key))
             return Boolean.TRUE.equals(values.get(NotificationCloudRules.ENABLED));
         if(key.startsWith("wave_"))return Boolean.TRUE.equals(values.get("realtime_media_wave"));
+        if (CapsuleMarqueeOptions.ENABLED.equals(key)) return true;
+        if (key.startsWith("capsule_marquee_")) return Boolean.TRUE.equals(values.get(CapsuleMarqueeOptions.ENABLED));
         if ("capsule_height_percent".equals(key)) return Boolean.TRUE.equals(values.get("capsule_size_enabled"));
         if ("capsule_continuous_corners".equals(key)) return Boolean.TRUE.equals(values.get("capsule_corners_enabled"));
         if ("card_continuous_corners".equals(key)) return Boolean.TRUE.equals(values.get("card_corners_enabled"));

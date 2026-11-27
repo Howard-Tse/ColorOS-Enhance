@@ -43,7 +43,7 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
     private final NativeNotificationCapsule capsule;
     private final NativeShadeNotificationDismissal shadeDismissal;
     private final NativeNotificationShadePaging paging;
-    private record Appearance(NotificationCloudRules.Style style, NotificationCloudRules.CapsuleText text, int limit,
+    private record Appearance(NotificationCloudRules.Style style, NotificationCloudRules.CapsuleText text, int limit, boolean marquee,
             boolean floating, Map<String, NotificationCloudRules.Floating> appFloating,
             Map<String, NotificationCloudRules.CloneRule> clones) { }
     private Appearance appearance;
@@ -139,7 +139,7 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
 
     @Override public void update(List<NotificationCloudStore.Entry<StatusBarNotification>> notifications, NotificationCloudRules rules,
             Set<String> autoExpand) {
-        Appearance rendering = new Appearance(rules.style(), rules.capsuleText(), feature.capsuleMaxDp(),
+        Appearance rendering = new Appearance(rules.style(), rules.capsuleText(), feature.capsuleMaxDp(), feature.capsuleMarquee(),
                 rules.floating(), rules.appFloating(), rules.clones());
         boolean changedAppearance = !rendering.equals(appearance);
         boolean lockCards = !feature.unlocked() && rules.retainOnLock() && rules.lockCards();
@@ -179,7 +179,7 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
                 Object template = null;
                 if (model == null || rerender || panelChanged && page == null) {
                     render = feature.renderNotification(group);
-                    String label = capsule == null ? "" : capsule.caption(render, host, rules, rendering.limit());
+                    String label = capsule == null ? "" : capsule.caption(render, host, rules, rendering.limit(), rendering.marquee());
                     template = capsule == null ? Reflect.call(parse, parser, render)
                             : capsule.parse(parse, parser, render, label);
                     if (template == null) {
@@ -188,7 +188,7 @@ final class NativeNotificationCloud implements NotificationCloudRenderer {
                         continue;
                     }
                     if (model == null || rerender) {
-                        boolean keepCapsule = model != null && rendering.limit() > 0 && !label.isEmpty()
+                        boolean keepCapsule = model != null && (rendering.limit() > 0 || rendering.marquee()) && !label.isEmpty()
                                 && !placementChanged && !changedAppearance && label.equals(captions.get(item.key()))
                                 && sameResourceIcon((StatusBarNotification) Reflect.get(source, model), render);
                         model = updateModel(model, render, template, entry, keepCapsule);

@@ -36,7 +36,7 @@ final class AndroidMediaWavePcm {
         boolean configured = false, transferred = false;
         int restoreLatency = -1;
         try {
-            if (!effect.hasControl()) throw new IllegalStateException("Private capture control unavailable");
+            if (!effect.hasControl() || effect.getEnabled()) throw new MediaWaveCapture.NotReady("Visualizer already in use");
             int[] value = new int[1];
             // Older HIDL implementations cannot read LATENCY. Leave them on the
             // established Visualizer API, without a firmware/version-name guess.
@@ -44,7 +44,7 @@ final class AndroidMediaWavePcm {
             int latency = value[0];
             if (latency < 0 || latency > 3000) return null;
             restoreLatency = latency;
-            require(effect.setEnabled(false)); configured = true;
+            configured = true;
             require((int) Reflect.call(set, effect, 0, MediaWaveSpectrum.SIZE));
             require((int) Reflect.call(set, effect, 1, 0)); // NORMALIZED, same as Visualizer.
             require(effect.setEnabled(true));

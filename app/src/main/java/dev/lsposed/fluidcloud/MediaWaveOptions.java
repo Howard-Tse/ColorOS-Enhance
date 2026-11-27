@@ -3,7 +3,8 @@ package dev.lsposed.fluidcloud;
 import java.util.Map;
 
 public record MediaWaveOptions(int intervalMs, int sensitivityPercent, int attackMs, int releaseMs,
-                               boolean holdPaused, MediaWaveBands bands) {
+                               boolean holdPaused, MediaWaveBands bands, boolean mixCompatibility) {
+    public static final String MIX_COMPATIBILITY_KEY = "wave_mix_compatibility";
     public static final int INTERVAL_MIN_MS = 20;
     public static final int INTERVAL_MAX_MS = 1000;
     public static final int INTERVAL_STEP_MS = 10;
@@ -19,7 +20,12 @@ public record MediaWaveOptions(int intervalMs, int sensitivityPercent, int attac
     public static final MediaWaveOptions DEFAULTS = new MediaWaveOptions(80, 100, 45, 105, false);
 
     public MediaWaveOptions(int intervalMs, int sensitivityPercent, int attackMs, int releaseMs, boolean holdPaused) {
-        this(intervalMs, sensitivityPercent, attackMs, releaseMs, holdPaused, MediaWaveBands.DEFAULTS);
+        this(intervalMs, sensitivityPercent, attackMs, releaseMs, holdPaused, MediaWaveBands.DEFAULTS, false);
+    }
+
+    public MediaWaveOptions(int intervalMs, int sensitivityPercent, int attackMs, int releaseMs,
+                            boolean holdPaused, MediaWaveBands bands) {
+        this(intervalMs, sensitivityPercent, attackMs, releaseMs, holdPaused, bands, false);
     }
 
     public MediaWaveOptions {
@@ -36,7 +42,8 @@ public record MediaWaveOptions(int intervalMs, int sensitivityPercent, int attac
                 number(values, "wave_sensitivity", DEFAULTS.sensitivityPercent()),
                 number(values, "wave_attack_ms", DEFAULTS.attackMs()),
                 number(values, "wave_release_ms", DEFAULTS.releaseMs()),
-                Boolean.TRUE.equals(values.get("wave_hold_paused")), MediaWaveBands.from(values));
+                Boolean.TRUE.equals(values.get("wave_hold_paused")), MediaWaveBands.from(values),
+                Boolean.TRUE.equals(values.get(MIX_COMPATIBILITY_KEY)));
     }
 
     private static int number(Map<String, ?> values, String key, int fallback) {

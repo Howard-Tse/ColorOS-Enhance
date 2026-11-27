@@ -22,7 +22,8 @@ final class AudioFlingerWaveRoute {
     private static final long HARMLESS_CBLK_FLAGS=0x1|0x2|0x20; // UNDERRUN, FORCEREADY, LOOP_CYCLE
     private static final class Output {
         final String type;long flags;int streams,rate,rateFields;boolean invalid;
-        Output(String type){this.type=type;}
+        int effectsStart=-1,effectsEnd;
+        Output(String type,int end){this.type=type;effectsEnd=end;}
         void stream(String line){
             streams++;
             Matcher value=STREAM.matcher(line);
@@ -39,13 +40,35 @@ final class AudioFlingerWaveRoute {
         return assess(dump,uid,session).route();
     }
     static Assessment assess(String dump,int uid,int session){
+        return assess(dump,uid,session,false);
+    }
+    static Assessment assess(String dump,int uid,int session,boolean allowOutputMix){
         if(dump==null || uid<0 || session<=0 || dump.length()>262144)return new Assessment(MediaWaveCapture.Route.WAIT,"snapshot not ready");
         Output current=null;boolean tracks=false;var candidates=new ArrayList<Candidate>();
-        for(String line:dump.split("\n")){
+        String[] lines=dump.split("\n");
+        var outputs=new ArrayList<Output>();
+        int orphanStart=-1,orphanEnd=lines.length;
+        boolean unknownOutput=false;
+        for(int index=0;index<lines.length;index++){
+            String line=lines[index];
             String trimmed=line.trim();
+            if(trimmed.equals("Orphan Effect Chains")){
+                if(current!=null)current.effectsEnd=Math.min(current.effectsEnd,index);
+                orphanStart=index;current=null;tracks=false;
+                continue;
+            }
+            if(orphanStart>=0 && trimmed.startsWith("Historical Thread Log"))orphanEnd=Math.min(orphanEnd,index);
             Matcher output=OUTPUT.matcher(trimmed);
-            if(output.matches()){current=new Output(output.group(1));tracks=false;continue;}
-            if(trimmed.startsWith("Output thread") || trimmed.startsWith("Input thread") || trimmed.startsWith("Record thread")){current=null;tracks=false;}
+            if(trimmed.startsWith("Output thread") || trimmed.startsWith("Input thread") || trimmed.startsWith("Record thread")){
+                if(current!=null)current.effectsEnd=Math.min(current.effectsEnd,index);
+                current=output.matches()?new Output(output.group(1),lines.length):null;
+                if(allowOutputMix && trimmed.startsWith("Output thread")){
+                    if(current==null)unknownOutput=true;
+                    else outputs.add(current);
+                }
+                tracks=false;
+                continue;
+            }
             if(current==null)continue;
             Matcher rate=RATE.matcher(trimmed);
             if(rate.matches() && !tracks){
@@ -55,7 +78,14 @@ final class AudioFlingerWaveRoute {
             }
             if(trimmed.startsWith("AudioStreamOut:")){current.stream(trimmed);continue;}
             if(trimmed.matches("\\d+ Tracks(?: of which \\d+ are active)?")){tracks=true;continue;}
-            if(trimmed.contains("Effect Chains") || trimmed.equals("Local log:") || trimmed.startsWith("Local log:"))tracks=false;
+            if(trimmed.endsWith(" Effect Chains") && index<current.effectsEnd){
+                current.effectsStart=current.effectsStart==-1?index:-2;
+                tracks=false;
+            }
+            if(trimmed.startsWith("Local log:")){
+                current.effectsEnd=Math.min(current.effectsEnd,index);
+                tracks=false;
+            }
             if(!tracks)continue;
             Matcher row=TRACK.matcher(line);
             if(!row.matches())continue;
@@ -77,7 +107,28 @@ final class AudioFlingerWaveRoute {
             else safe=result;
         }
         if(waiting!=null)return waiting;
-        return candidates.size()==1?safe:new Assessment(MediaWaveCapture.Route.WAIT,candidates.isEmpty()?"live track not ready":"ambiguous live tracks");
+        if(candidates.size()!=1)return new Assessment(MediaWaveCapture.Route.WAIT,candidates.isEmpty()?"live track not ready":"ambiguous live tracks");
+        Output selected=candidates.getFirst().output();
+        var effects=AudioFlingerWaveEffects.inspect(lines,selected.effectsStart,selected.effectsEnd,session);
+        if(effects!=AudioFlingerWaveEffects.Result.CLEAR && effects!=AudioFlingerWaveEffects.Result.UNKNOWN
+                && allowOutputMix && !unknownOutput && outputMixAvailable(lines,outputs,orphanStart,orphanEnd)){
+            return new Assessment(MediaWaveCapture.Route.SAFE_OUTPUT_MIX,"audio effect compatibility: output mix");
+        }
+        return switch(effects){
+            case CLEAR -> safe;
+            case UNKNOWN -> new Assessment(MediaWaveCapture.Route.WAIT,"audio effect state not ready");
+            case GLOBAL -> new Assessment(MediaWaveCapture.Route.EFFECT_CONFLICT,"global audio effect active");
+            case SESSION -> new Assessment(MediaWaveCapture.Route.EFFECT_CONFLICT,"playback session audio effect active");
+            case VISUALIZER_IN_USE -> new Assessment(MediaWaveCapture.Route.EFFECT_CONFLICT,"playback session visualizer in use");
+        };
+    }
+    private static boolean outputMixAvailable(String[] lines,ArrayList<Output> outputs,int orphanStart,int orphanEnd){
+        // AudioPolicy chooses the mix output and can move the global chain between threads.
+        for(Output output:outputs)
+            if(AudioFlingerWaveEffects.inspectOutputMix(lines,output.effectsStart,output.effectsEnd)
+                    !=AudioFlingerWaveEffects.Result.CLEAR)return false;
+        return orphanStart<0 || AudioFlingerWaveEffects.inspectOutputMix(lines,orphanStart,orphanEnd)
+                ==AudioFlingerWaveEffects.Result.CLEAR;
     }
     private static Assessment assess(Candidate track){
         Output output=track.output();

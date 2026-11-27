@@ -20,6 +20,7 @@ final class CloudExtras {
     private final Field host,fakeHost;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ArrayList<Session> sessions=new ArrayList<>();
+    private final NativeCapsuleMarquee marquee;
     private WeakReference<Object> capsuleController = new WeakReference<>(null);
     private final Runnable refreshHost = this::refreshCapsuleHost;
     private void refreshCapsuleHost() {
@@ -37,6 +38,7 @@ final class CloudExtras {
     }
     CloudExtras(HookEntry module,ClassLoader loader)throws ReflectiveOperationException{
         this.module=module;
+        marquee = new NativeCapsuleMarquee(module, main);
         Class<?> owner=Reflect.type(loader,"com.oplus.systemui.statusbar.seeding.CapsulePluginContainerController");
         Class<?> plugin=Reflect.type(loader,"com.android.systemui.plugins.statusbar.SeedlingPlugin");
         added=Reflect.method(owner,"onPluginAdded",void.class,plugin,Context.class);
@@ -56,6 +58,7 @@ final class CloudExtras {
             hooks.add(module.hook(removed).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain->{
                 ViewGroup view=(ViewGroup)Reflect.get(host,chain.getThisObject());
                 for(Session session:new ArrayList<>(sessions))if(session.belongsTo(view)){session.close();sessions.remove(session);}
+                refreshMarquee();
                 return chain.proceed();
             }));
         }catch(RuntimeException|LinkageError error){for(var hook:hooks)hook.unhook();throw error;}
@@ -85,14 +88,22 @@ final class CloudExtras {
             View fake=fakeHost==null?null:(View)Reflect.get(fakeHost,owner);
             if(fake!=null){existing.roots.add(fake);if(existing.wave!=null)existing.wave.root(fake);}
             existing.refresh();
+            refreshMarquee();
             if (overflowY(root) > 0 || module.needsLockExitAdapter()) scheduleHostRefresh();
         }
     }
     void configurationChanged() {
         main.post(() -> {
+            refreshMarquee();
             for (Session session : sessions) session.refresh();
             if (module.needsLockExitAdapter()) scheduleHostRefresh();
         });
+    }
+    private void refreshMarquee() {
+        var options = sessions.isEmpty() ? CapsuleMarqueeOptions.DEFAULTS : module.config.capsuleMarquee();
+        if (marquee.configure(options)) for (Session session : sessions) {
+            for (View root : session.roots) marquee.refresh(root);
+        }
     }
     private void scheduleHostRefresh() {
         if (!main.hasCallbacks(refreshHost)) main.post(refreshHost);
@@ -178,15 +189,35 @@ final class CloudExtras {
             try{
                 size=new NativeCapsuleSize(lookup);
                 hooks.add(module.hook(size.measure).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE).intercept(chain->{
-                    Object result=chain.proceed();
-                    safe(()->size.afterMeasure((View)chain.getThisObject(),(int)chain.getArg(0),
-                            closing?CapsuleSize.OEM:module.config.capsuleSize(),
-                            module.notificationCloud == null ? Integer.MAX_VALUE
-                                    : module.notificationCloud.capsuleWidthLimit((View) chain.getThisObject())));
+                    View capsule = (View) chain.getThisObject();
+                    CapsuleSize options = closing ? CapsuleSize.OEM : module.config.capsuleSize();
+                    if (options.original() && !size.tracks(capsule)) return chain.proceed();
+                    View previous = size.beginNativeMeasure(capsule);
+                    Object result;
+                    try { result = chain.proceed(); }
+                    finally { size.endNativeMeasure(previous); }
+                    safe(() -> size.afterMeasure(capsule, (int) chain.getArg(0), (int) chain.getArg(1), options,
+                            options.original() || module.notificationCloud == null ? Integer.MAX_VALUE
+                                    : module.notificationCloud.capsuleWidthLimit(capsule)));
                     return result;
                 }));
                 module.info("Native capsule size controls installed");
             }catch(ReflectiveOperationException|RuntimeException|LinkageError error){rollback(start);size=null;module.error("Capsule sizing unavailable; native bounds retained",error);}
+            if (size != null && size.templateMeasure != null) {
+                try {
+                    hooks.add(module.hook(size.templateMeasure).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                            .intercept(chain -> {
+                                View template = (View) chain.getThisObject();
+                                if (closing || !size.isTemplateWidthProbe(template, (int) chain.getArg(0), (int) chain.getArg(1)))
+                                    return chain.proceed();
+                                Object result = chain.proceed();
+                                int[] specs = size.templateProbeSpecs(template);
+                                return specs == null ? result : chain.proceed(new Object[]{specs[0], specs[1]});
+                            }));
+                } catch (RuntimeException | LinkageError unavailable) {
+                    module.error("Capsule template width animation adapter unavailable", unavailable);
+                }
+            }
             start=hooks.size();
             try {
                 position = new NativeCapsulePosition(lookup);
@@ -200,8 +231,13 @@ final class CloudExtras {
                 if (position.hidden != null) {
                     hooks.add(module.hook(position.hidden).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
                             .intercept(chain -> {
+                                View capsule = (View) chain.getThisObject();
+                                boolean visible = capsule.getVisibility() == View.VISIBLE;
                                 Object result = chain.proceed();
-                                if (!closing) safe(() -> position.afterVisibility((View) chain.getThisObject()));
+                                if (!closing) safe(() -> {
+                                    if (visible && capsule.getVisibility() != View.VISIBLE) marquee.hidden(capsule);
+                                    position.afterVisibility(capsule);
+                                });
                                 return result;
                             }));
                 }

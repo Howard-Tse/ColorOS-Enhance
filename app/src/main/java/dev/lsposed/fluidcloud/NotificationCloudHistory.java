@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BiPredicate;
 
 /** In-memory text snapshots. Archived notifications never enter the live notification store. */
 final class NotificationCloudHistory {
@@ -50,10 +51,19 @@ final class NotificationCloudHistory {
         });
     }
 
-    void removed(String key, int reason, long now) {
+    void removed(StatusBarNotification notification, int reason, long now, boolean opened, boolean captureReplacement) {
+        String key = notification.getKey();
         Seen previous = live.remove(key);
-        if (previous == null) return;
-        if (reason != NotificationListenerService.REASON_APP_CANCEL && reason != NotificationListenerService.REASON_APP_CANCEL_ALL) return;
+        boolean appCanceled = reason == NotificationListenerService.REASON_APP_CANCEL
+                || reason == NotificationListenerService.REASON_APP_CANCEL_ALL;
+        if (userCleared(reason) || appCanceled && opened) {
+            if (!archived.isEmpty() || !removed.isEmpty()) {
+                Source source = previous == null ? source(notification) : previous.source();
+                clearMatching((archiveKey, archiveSource) -> key.equals(archiveKey) || source.equals(archiveSource));
+            }
+            return;
+        }
+        if (!appCanceled || !captureReplacement || previous == null) return;
         // Some apps post the replacement before cancelling its predecessor.
         Seen replacement = live.values().stream().filter(candidate -> candidate.source().equals(previous.source())
                 && candidate.order() > previous.order() && now - candidate.observedAt() <= REPLACEMENT_MS)
@@ -64,6 +74,15 @@ final class NotificationCloudHistory {
         }
         removed.put(key, new Removed(previous, now));
         while (removed.size() > LIMIT) removed.pollFirstEntry();
+    }
+
+    private static boolean userCleared(int reason) {
+        return switch (reason) {
+            case NotificationListenerService.REASON_CLICK, NotificationListenerService.REASON_CANCEL,
+                    NotificationListenerService.REASON_CANCEL_ALL, NotificationListenerService.REASON_LISTENER_CANCEL,
+                    NotificationListenerService.REASON_LISTENER_CANCEL_ALL -> true;
+            default -> false;
+        };
     }
 
     private void save(Seen previous) {
@@ -99,8 +118,12 @@ final class NotificationCloudHistory {
 
     void clearGroup(List<Entry<StatusBarNotification>> group) {
         var groupSources = new GroupSources(group);
-        if (archived.values().removeIf(archive -> groupSources.matches(archive.sourceKey(), archive.source()))) generation++;
-        removed.values().removeIf(removal -> groupSources.matches(removal.item().key(), removal.item().source()));
+        clearMatching(groupSources::matches);
+    }
+
+    private void clearMatching(BiPredicate<String, Source> matches) {
+        if (archived.values().removeIf(archive -> matches.test(archive.sourceKey(), archive.source()))) generation++;
+        removed.values().removeIf(removal -> matches.test(removal.item().key(), removal.item().source()));
     }
 
     private static final class GroupSources {

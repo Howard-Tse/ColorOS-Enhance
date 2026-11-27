@@ -17,10 +17,12 @@ public class MediaWaveCaptureTest {
         void next(){delays.removeFirst();tasks.removeFirst().run();}
     }
     private static final class Backend implements MediaWaveCapture.Backend {
-        boolean safe=true,readable=true,unsafe;int checks,opens,closes,reads,notReady,transientReads,warmupReads;Runnable duringCheck=()->{},duringOpen=()->{};
+        boolean safe=true,readable=true,unsafe,effectConflict,outputMix;int checks,opens,closes,reads,notReady,transientReads,warmupReads;Runnable duringCheck=()->{},duringOpen=()->{};
         final List<String> events=new ArrayList<>();
         public boolean safe(MediaWaveCapture.Request request){checks++;duringCheck.run();return safe;}
         public MediaWaveCapture.Route route(MediaWaveCapture.Request request)throws Exception{
+            if(effectConflict){checks++;return MediaWaveCapture.Route.EFFECT_CONFLICT;}
+            if(outputMix){checks++;return MediaWaveCapture.Route.SAFE_OUTPUT_MIX;}
             if(unsafe){checks++;duringCheck.run();return MediaWaveCapture.Route.UNSAFE;}
             return MediaWaveCapture.Backend.super.route(request);
         }
@@ -144,6 +146,23 @@ public class MediaWaveCaptureTest {
         var f=new Fixture();f.backend.unsafe=true;f.capture.request(A);while(!f.clock.tasks.isEmpty())f.clock.next();
         assertEquals(6,f.backend.checks);assertEquals(0,f.backend.opens);assertEquals(0,f.backend.reads);assertEquals(0,f.backend.closes);
         assertEquals(1,f.fallbacks);assertTrue(f.clock.tasks.isEmpty());
+    }
+    @Test public void effectConflictFallsBackWithoutPollingAndCanRecoverOnNextAcquisition(){
+        var f=new Fixture();f.backend.effectConflict=true;f.capture.request(A);f.clock.next();
+        assertEquals(1,f.backend.checks);assertEquals(0,f.backend.opens);assertEquals(1,f.fallbacks);
+        assertTrue(f.clock.tasks.isEmpty());
+        f.capture.request(null);f.clock.next();
+        f.backend.effectConflict=false;f.capture.request(A);f.clock.next();
+        assertEquals(2,f.backend.checks);assertEquals(1,f.backend.opens);assertEquals(1,f.outputs);
+    }
+    @Test public void outputMixNeedsConsentAndTurningItOffClosesTheExistingCapture(){
+        var f=new Fixture();f.backend.outputMix=true;
+        f.capture.request(A);f.clock.next();
+        assertEquals(0,f.backend.opens);assertEquals(1,f.fallbacks);
+        f.capture.request(new MediaWaveCapture.Request(A.uid(),A.session(),A.route(),A.player(),true));f.clock.next();
+        assertEquals(1,f.backend.opens);assertEquals(1,f.outputs);
+        f.capture.request(A);while(!f.clock.tasks.isEmpty())f.clock.next();
+        assertEquals(1,f.backend.closes);assertEquals(1,f.backend.opens);assertEquals(2,f.fallbacks);
     }
     @Test public void cancellingUnsafeRecoveryPreventsEveryRemainingRouteRecheck(){
         var f=new Fixture();f.backend.unsafe=true;f.capture.request(A);f.clock.next();

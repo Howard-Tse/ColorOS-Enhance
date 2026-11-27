@@ -137,7 +137,8 @@ public class SettingsUiControllerTest {
         var unrelated = Map.<String,Object>of("enabled", true, "realtime_media_wave", true, "hide_capsule_arrows", true);
         store.values.putAll(unrelated);
         store.values.putAll(Map.of(MediaWaveBands.KEY, "30,100,300,800,2500,6000,18000", "wave_interval_ms", 1000,
-                "wave_sensitivity", 500, "wave_attack_ms", 1000, "wave_release_ms", 2000, "wave_hold_paused", true));
+                "wave_sensitivity", 500, "wave_attack_ms", 1000, "wave_release_ms", 2000, "wave_hold_paused", true,
+                "wave_mix_compatibility", true));
         long stale = f.ui.state("cloud").revision();
         assertEquals("ok", f.ui.toggle("cloud", "hide_capsule_arrows", false));
         assertEquals("conflict", f.ui.resetWave(stale));

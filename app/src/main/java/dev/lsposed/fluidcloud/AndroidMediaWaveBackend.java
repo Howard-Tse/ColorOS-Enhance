@@ -11,14 +11,14 @@ import android.system.StructPollfd;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 
-/** Runs only on the capture worker. Does not use shell/root, microphone or global session 0. */
+/** Runs only on the capture worker. Output mix sampling requires explicit opt-in. */
 final class AndroidMediaWaveBackend implements MediaWaveCapture.Backend {
+    private record ApprovedCapture(MediaWaveCapture.Request request, AudioFlingerWaveRoute.Assessment assessment) { }
     private final IBinder audio;
     private final java.util.function.Supplier<MediaWaveOptions> options;
     private final java.util.function.Consumer<String> diagnostic;
     private MediaWaveCapture.Request diagnosticRequest;
-    private MediaWaveCapture.Request pcmRequest;
-    private int pcmRate;
+    private ApprovedCapture approved;
     private int requestNumber,checkNumber;
     AndroidMediaWaveBackend()throws ReflectiveOperationException{
         this(()->MediaWaveOptions.DEFAULTS);
@@ -34,17 +34,17 @@ final class AndroidMediaWaveBackend implements MediaWaveCapture.Backend {
         if(audio==null)throw new IllegalStateException("Audio service unavailable");
     }
     @Override public boolean safe(MediaWaveCapture.Request request)throws Exception{
-        return route(request)==MediaWaveCapture.Route.SAFE;
+        return route(request).canOpen();
     }
     @Override public MediaWaveCapture.Route route(MediaWaveCapture.Request request)throws Exception{
         // A bounded read-only native snapshot once per acquisition, not a per-frame dumpsys.
         // No effect is created until the actual track and output thread have passed this check.
         if(!request.equals(diagnosticRequest)){diagnosticRequest=request;requestNumber++;checkNumber=0;}
         checkNumber++;
-        pcmRequest=null;pcmRate=0;
+        approved=null;
         try{
-            var assessment=AudioFlingerWaveRoute.assess(snapshot(),request.uid(),request.session());
-            if(assessment.route()==MediaWaveCapture.Route.SAFE){pcmRequest=request;pcmRate=assessment.samplingRateHz();}
+            var assessment=AudioFlingerWaveRoute.assess(snapshot(),request.uid(),request.session(),request.allowOutputMix());
+            if(assessment.route().canOpen())approved=new ApprovedCapture(request,assessment);
             diagnostic.accept("Media wave route check: request="+requestNumber+" check="+checkNumber+" "+assessment.route()+" "+assessment.reason());
             return assessment.route();
         }
@@ -72,11 +72,20 @@ final class AndroidMediaWaveBackend implements MediaWaveCapture.Backend {
         }
     }
     @Override public MediaWaveCapture.Source open(MediaWaveCapture.Request request)throws MediaWaveCapture.NotReady{
+        ApprovedCapture capture=approved;approved=null;
+        if(capture==null || !capture.request().equals(request))throw new MediaWaveCapture.NotReady("Audio route changed");
+        if(capture.assessment().route()==MediaWaveCapture.Route.SAFE_OUTPUT_MIX){
+            if(!request.allowOutputMix() || !options.get().mixCompatibility())
+                throw new MediaWaveCapture.NotReady("Output mix disabled");
+            diagnostic.accept("Media wave capture: compatible output mix");
+            return platformVisualizer(0,null); // Android chooses the music output for session 0.
+        }
         // The allow-listed private PCM route has already been checked by the worker.
         // Newer AIDL engines expose their visual-only latency and can avoid their
         // broken wrapped capture window. Unsupported older engines keep the API path.
         try {
-            MediaWaveCapture.Source fresh = request.equals(pcmRequest) && pcmRate > 0
+            int pcmRate=capture.assessment().samplingRateHz();
+            MediaWaveCapture.Source fresh = pcmRate > 0
                     ? AndroidMediaWavePcm.open(request.session(), pcmRate, options, diagnostic) : null;
             if (fresh != null) return fresh;
         } catch (MediaWaveCapture.NotReady waiting) {
@@ -85,15 +94,19 @@ final class AndroidMediaWaveBackend implements MediaWaveCapture.Backend {
             diagnostic.accept("Media wave capture: platform Visualizer API (fresh PCM capability unavailable: "
                     + unavailable.getClass().getSimpleName() + ")");
         }
+        return platformVisualizer(request.session(),diagnostic);
+    }
+    private MediaWaveCapture.Source platformVisualizer(int session,java.util.function.Consumer<String> trace)
+            throws MediaWaveCapture.NotReady{
         Visualizer visualizer;
-        try{visualizer=new Visualizer(request.session());} // never session 0
+        try{visualizer=new Visualizer(session);}
         catch(RuntimeException error){
             // Visualizer's Java wrapper exposes NO_INIT as a RuntimeException. A new
             // playback track can be advertised before its effect engine is attachable.
             if(error.getMessage()!=null && error.getMessage().endsWith("error: -3"))throw new MediaWaveCapture.NotReady(error);
             throw error;
         }
-        return configure(visualizer, options, diagnostic);
+        return configure(visualizer, options, trace);
     }
     static MediaWaveCapture.Source configure(Visualizer visualizer,java.util.function.Supplier<MediaWaveOptions> options)throws MediaWaveCapture.NotReady{
         return configure(visualizer, options, null);
@@ -105,9 +118,8 @@ final class AndroidMediaWaveBackend implements MediaWaveCapture.Backend {
             int[] range=Visualizer.getCaptureSizeRange();
             int size=MediaWaveSpectrum.SIZE;
             if(range.length<2 || range[0]>size || range[1]<size)throw new IllegalStateException("FFT capture size unavailable");
-            // Effect instances are keyed by session/type, and a freshly obtained handle
-            // may inherit an enabled engine. Capture size can only change while disabled.
-            require(visualizer.setEnabled(false),"disable");
+            // Another client can acquire the effect after the route snapshot.
+            if(visualizer.getEnabled())throw new MediaWaveCapture.NotReady("Visualizer already enabled");
             require(visualizer.setCaptureSize(size),"capture size");
             require(visualizer.setScalingMode(Visualizer.SCALING_MODE_NORMALIZED),"scaling");
             require(visualizer.setEnabled(true),"activation");

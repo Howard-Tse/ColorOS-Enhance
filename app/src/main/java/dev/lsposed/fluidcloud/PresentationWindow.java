@@ -533,6 +533,7 @@ final class PresentationWindow {
             }
             if(disposed || rendered!=CloudPresentationCoordinator.Owner.MODULE || frame==null || !accepts.test(frame.ticket()) || geometry==null)return;
             int save=canvas.save();busy++;
+            View previous = NativeCapsuleMarquee.presenting(this);
             try {
                 source.presentVisibility();
                 boolean morph=frame.collapsing()
@@ -570,7 +571,10 @@ final class PresentationWindow {
                 // buffers. Only their live output needs another module draw; static
                 // content and ended animations do not create a permanent frame loop.
                 if(source.hasRunningAnimation())postInvalidateOnAnimation();
-            }catch(RuntimeException|LinkageError error){fail(error);}finally{busy--;canvas.restoreToCount(save);}
+            }catch(RuntimeException|LinkageError error){fail(error);}finally{
+                NativeCapsuleMarquee.presenting(previous);
+                busy--;canvas.restoreToCount(save);
+            }
         }
         @SuppressLint("ClickableViewAccessibility")
         @Override public boolean onTouchEvent(MotionEvent event){
