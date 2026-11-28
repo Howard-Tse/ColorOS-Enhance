@@ -8,6 +8,7 @@ final class AudioFlingerWaveEffects {
     private static final String VISUALIZER = "e46b26a0-dddd-11db-8afd-0002a5d5c51b";
     private static final String VOLUME = "09e8ede0-ddde-11db-b4f6-0002a5d5c51b";
     private static final String DYNAMICS = "7261676f-6d75-7369-6364-28e2fd3ac39e";
+    private static final String OPLUS_AUDIO_X = "41f6c0f4-5d8f-11ec-bf63-0242ac130002";
     private static final Pattern CHAINS = Pattern.compile("(\\d+) Effect Chains");
     private static final Pattern CHAIN = Pattern.compile("(\\d+) effects? for session (-?\\d+)");
     private static final Pattern EFFECT = Pattern.compile("Effect ID \\d+:");
@@ -67,21 +68,26 @@ final class AudioFlingerWaveEffects {
     }
 
     private static Result inspectEffect(String[] lines, int start, int end, int owner, boolean outputMix) {
-        String type = null;
+        String type = null, implementation = null, implementor = null;
         long flags = -1;
         int clients = -1;
-        boolean hasState = false, active = false;
+        boolean hasState = false, enabled = false, suspended = false;
         for (int i = start; i < end; i++) {
             String line = lines[i].trim();
             if (line.equals(STATUS_HEADER) && i + 1 < end) {
                 var state = STATE.matcher(lines[++i].trim());
                 if (!state.matches() || Integer.parseInt(state.group(1)) != owner || hasState) return Result.UNKNOWN;
                 hasState = true;
-                active = state.group(2).equals("y") || state.group(3).equals("y");
+                enabled = state.group(2).equals("y");
+                suspended = state.group(3).equals("y");
             } else if (line.startsWith("- TYPE:")) {
                 var value = TYPE.matcher(line);
                 if (!value.matches() || type != null) return Result.UNKNOWN;
                 type = value.group(1).toLowerCase(Locale.ROOT);
+            } else if (line.startsWith("- UUID: ")) {
+                implementation = line.substring("- UUID: ".length());
+            } else if (line.startsWith("- implementor: ")) {
+                implementor = line.substring("- implementor: ".length());
             } else if (line.startsWith("- flags:")) {
                 var value = FLAGS.matcher(line);
                 if (!value.matches() || flags >= 0) return Result.UNKNOWN;
@@ -93,10 +99,14 @@ final class AudioFlingerWaveEffects {
             }
         }
         if (!hasState || type == null || flags < 0) return Result.UNKNOWN;
+        boolean active = enabled || suspended;
         if (owner == 0 && !outputMix) {
             // AudioFlinger exempts auxiliary, visualization, volume and dynamics effects on session 0.
             boolean exempt = (flags & 7) == 1 || type.equals(VISUALIZER) || type.equals(VOLUME) || type.equals(DYNAMICS);
-            return active && !exempt ? Result.GLOBAL : Result.CLEAR;
+            // This stock ColorOS descriptor stays enabled alongside a private Visualizer.
+            boolean stockAudioX = !suspended && flags == 0x208 && type.equals(OPLUS_AUDIO_X)
+                    && OPLUS_AUDIO_X.equalsIgnoreCase(implementation) && "Oplus Holdings Corp.".equals(implementor);
+            return active && !exempt && !stockAudioX ? Result.GLOBAL : Result.CLEAR;
         }
         if (type.equals(VISUALIZER)) {
             if (active || clients > 0) return Result.VISUALIZER_IN_USE;

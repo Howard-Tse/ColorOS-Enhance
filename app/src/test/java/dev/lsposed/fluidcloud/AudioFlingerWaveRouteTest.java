@@ -21,6 +21,7 @@ public class AudioFlingerWaveRouteTest {
     private static final String VISUALIZER = "e46b26a0-dddd-11db-8afd-0002a5d5c51b";
     private static final String DYNAMICS = "7261676f-6d75-7369-6364-28e2fd3ac39e";
     private static final String VOLUME = "09e8ede0-ddde-11db-b4f6-0002a5d5c51b";
+    private static final String OPLUS_AUDIO_X = "41f6c0f4-5d8f-11ec-bf63-0242ac130002";
 
     // Earlier route fixtures omit the effect table. Supply the native empty table.
     private static AudioFlingerWaveRoute.Assessment assess(String dump, int uid, int session) {
@@ -52,6 +53,29 @@ public class AudioFlingerWaveRouteTest {
         assertEquals(MediaWaveCapture.Route.EFFECT_CONFLICT, inspect(HEADER+ROW+suspended,10352,3673));
         assertTrue(safe(HEADER+enabled+HEADER+ROW+"  0 Effect Chains\n",10352,3673));
         assertTrue(safe(HEADER+ROW+"  1 Effect Chains\n"+chain(0,JDSP,false,false,1),10352,3673));
+    }
+    private static String stockAudioX(boolean enabled, boolean suspended) {
+        return chain(0,OPLUS_AUDIO_X,enabled,suspended,1)
+                .replace("Descriptor:\n","Descriptor:\n            - UUID: "+OPLUS_AUDIO_X+"\n")
+                .replace("1 Clients:","- name: OplusAudioX\n            - implementor: Oplus Holdings Corp.\n            1 Clients:");
+    }
+    @Test public void verifiedStockColorOsAudioXAllowsPrivateCaptureWithCompatibilityOffOrOn() {
+        String snapshot=HEADER+ROW+"  1 Effect Chains\n"+stockAudioX(true,false);
+        assertEquals(MediaWaveCapture.Route.SAFE,AudioFlingerWaveRoute.assess(snapshot,10352,3673,false).route());
+        assertEquals(MediaWaveCapture.Route.SAFE,AudioFlingerWaveRoute.assess(snapshot,10352,3673,true).route());
+    }
+    @Test public void audioXExemptionDoesNotCoverOtherDriversOrOtherEffectsInTheSameChain() {
+        String stock=stockAudioX(true,false);
+        String head=HEADER+ROW+"  1 Effect Chains\n";
+        for(String driver:new String[]{stock.replace("Oplus Holdings Corp.","Other vendor"),
+                stock.replace("- UUID: "+OPLUS_AUDIO_X,"- UUID: "+JDSP),
+                stock.replace("00000208","00000008"),stockAudioX(false,true)}){
+            assertEquals(MediaWaveCapture.Route.EFFECT_CONFLICT,inspect(head+driver,10352,3673));
+        }
+        String second=chain(0,JDSP,true,false,1).split("\n",2)[1].replace("Effect ID 35","Effect ID 80");
+        String combined=stock.replace("1 effects for session 0","2 effects for session 0")+second;
+        assertEquals(MediaWaveCapture.Route.EFFECT_CONFLICT,inspect(head+combined,10352,3673));
+        assertEquals(MediaWaveCapture.Route.SAFE_OUTPUT_MIX,AudioFlingerWaveRoute.assess(head+combined,10352,3673,true).route());
     }
     @Test public void standardExemptionsApplyOnlyToTheGlobalOutputMix() {
         for (String type : new String[]{VISUALIZER, DYNAMICS, VOLUME})

@@ -4,7 +4,7 @@
 
 [1.32.7 正式版下载与更新说明](https://github.com/Howard-Tse/ColorOS-Enhance/releases/tag/79-1.32.7)
 
-[1.32.8 预发布版下载与更新说明](https://github.com/Howard-Tse/ColorOS-Enhance/releases/tag/80-1.32.8)
+[1.32.9 预发布版下载与更新说明](https://github.com/Howard-Tse/ColorOS-Enhance/releases/tag/81-1.32.9)
 
 在支持原生分页组件的系统上，合并的通知流体云可在展开卡片、通知中心和锁屏列表左右翻页，底部圆点指示当前页。通知中心媒体卡片使用普通样式，支持歌词更新和多媒体翻页。「流体云 → 展开卡片」可分别调整左右外边距、卡片间距和正文内边距，0 dp 为原厂间距。
 
